@@ -1,5 +1,9 @@
 # Jeans Mixing — Android app (Parts 1 + 2)
 
+> 🌐 **Web version — no install needed:** https://dotgeniusandnova.github.io/JeansMixing/
+> Same app, runs in any phone browser (on iPhone: Safari → Share → Add to Home Screen).
+> Updates go live automatically — no APK to rebuild.
+
 A helper for the jeans-mixing job. You lay out empty boxes in a line and deal
 pairs of jeans into them round-robin (like cards) — this app handles the
 bookkeeping: entering sizes + quantities, reviewing them spreadsheet-style,
