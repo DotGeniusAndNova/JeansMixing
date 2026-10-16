@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#3949AB">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<title>Jeans Mixing</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- Projects -->
+<section id="view-projects" class="view">
+  <h1>Jeans Mixing</h1>
+  <div class="btn-col no-print">
+    <button id="newProjectBtn" class="primary">&#65291; New project</button>
+  </div>
+  <h2>Previous projects</h2>
+  <div id="projectList"></div>
+  <div id="noProjects" class="empty">No projects yet &mdash; create one to get started.</div>
+</section>
+
+<!-- Entry -->
+<section id="view-entry" class="view">
+  <div class="topbar no-print">
+    <button id="entryBack">&larr;</button>
+    <div class="title" id="entryProjectName"></div>
+    <button id="entryDone" class="primary">Done</button>
+  </div>
+  <div class="counter" id="entryCounter"></div>
+  <div class="size-line">
+    <button class="arrow" id="entryLeft">&larr;</button>
+    <div class="field" id="waistField" role="button" aria-label="waist"></div>
+    <div class="x">x</div>
+    <div class="field" id="lengthField" role="button" aria-label="length"></div>
+    <button class="arrow" id="entryRight">&rarr;</button>
+  </div>
+  <div class="qty-wrap">
+    <label>quantity:</label>
+    <div class="field" id="qtyField" role="button" aria-label="quantity"></div>
+  </div>
+  <div class="pad">
+    <button id="pad1">1</button><button id="pad2">2</button><button id="pad3">3</button>
+    <button id="pad4">4</button><button id="pad5">5</button><button id="pad6">6</button>
+    <button id="pad7">7</button><button id="pad8">8</button><button id="pad9">9</button>
+    <button id="padBack">&#9003;</button><button id="pad0">0</button><button id="padEnter" class="enter">Enter</button>
+  </div>
+</section>
+
+<!-- Review -->
+<section id="view-review" class="view">
+  <div class="topbar no-print">
+    <button id="reviewBack">&larr; Back</button>
+    <div class="title" id="reviewTitle"></div>
+  </div>
+  <div class="rows" id="reviewRows"></div>
+  <div class="total-line" id="reviewTotal"></div>
+  <div class="btn-row no-print">
+    <button id="confirmBtn" class="primary">Confirm</button>
+  </div>
+</section>
+
+<!-- Locked -->
+<section id="view-locked" class="view">
+  <div class="topbar no-print">
+    <button id="lockedBack">&larr; Projects</button>
+    <div class="title" id="lockedTitle"></div>
+  </div>
+  <div class="rows" id="lockedRows"></div>
+  <div class="total-line" id="lockedTotal"></div>
+  <h2>Box assignment</h2>
+  <div id="boxAssign"></div>
+  <div class="btn-row no-print">
+    <button id="printBtn">&#128438; Print</button>
+    <button id="startPlacingBtn" class="primary">Start placing</button>
+  </div>
+</section>
+
+<!-- Placing -->
+<section id="view-placing" class="view">
+  <div class="topbar no-print">
+    <button id="placingBack">&larr; Project</button>
+    <div class="title" id="placingSubtitle"></div>
+  </div>
+  <div id="placingMain">
+    <div class="slot-line" id="bundleLayerView"></div>
+    <div class="flip-cue" id="flipCue">&#128260; flip after this pair</div>
+    <div class="size-big" id="sizeBig"></div>
+    <div class="placed-line" id="placedView"></div>
+    <div class="add-row">
+      <button id="add1">+1</button><button id="add5">+5</button><button id="add10">+10</button>
+    </div>
+    <div class="nav-row">
+      <button id="placeUndo">&#8617; Undo</button>
+      <button id="placeLeft">&larr;</button>
+      <button id="placeRight">&rarr;</button>
+    </div>
+    <div class="btn-row">
+      <button id="placeDone" class="primary">Done</button>
+    </div>
+    <div class="btn-row">
+      <button id="boxMenuBtn">&#9776; Boxes</button>
+      <button id="staplingBtn">stapling</button>
+      <button id="reviewSizesBtn">Review sizes</button>
+    </div>
+    <div class="timeline-label">History</div>
+    <div class="timeline" id="timelineRows"></div>
+    <button class="reset-link no-print" id="resetPlacingBtn">Reset placing progress</button>
+  </div>
+  <div id="placingComplete" style="display:none">
+    <h2>Placing complete!</h2>
+    <div class="rows" id="completeRows"></div>
+    <div class="total-line" id="completeTotal"></div>
+    <div class="btn-row no-print">
+      <button id="completeBack">&larr; Back to project</button>
+    </div>
+  </div>
+</section>
+
+<!-- Box detail -->
+<section id="view-box" class="view">
+  <div class="topbar no-print">
+    <button id="boxBack">&larr; Back</button>
+    <div class="title" id="boxTitle"></div>
+  </div>
+  <table class="btable">
+    <thead><tr><th>Pair</th><th>Size</th><th>Bundle</th><th>Layer</th></tr></thead>
+    <tbody id="boxRows"></tbody>
+  </table>
+</section>
+
+<!-- Stapling -->
+<section id="view-stapling" class="view">
+  <div class="topbar no-print">
+    <button id="stapleBack">&larr; Back</button>
+    <div class="title">Stapling</div>
+  </div>
+  <div class="staple-big" id="stapleTitle"></div>
+  <div class="staple-line" id="stapleLine"></div>
+  <input class="num-input" id="stapleInput" type="number" inputmode="numeric" min="0">
+  <div class="btn-row no-print" style="margin-top:16px">
+    <button id="stapleDone" class="primary">Done</button>
+  </div>
+</section>
+
+<div id="modalOverlay"><div id="modalBox"></div></div>
+<div id="toast"></div>
+
+<script src="js/model.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
