@@ -444,34 +444,7 @@
     var total = p.entries.reduce(function (s, e) { return s + e.qty; }, 0);
     el('lockedTotal').textContent = total + ' pairs \u2192 ' + (total / M.BOX_CAPACITY) + ' boxes';
 
-    // Box-assignment table from the plan (round-robin dealing).
-    var assign = el('boxAssign');
-    assign.innerHTML = '';
-    var sim = M.simulate(p);
-    sim.forEach(function (boxList, bi) {
-      var card = document.createElement('div');
-      card.className = 'boxcard';
-      var bh = document.createElement('div');
-      bh.className = 'bh';
-      bh.textContent = 'Box ' + (bi + 1) + ' \u2014 ' + boxList.length + ' pairs';
-      var chips = document.createElement('div');
-      chips.className = 'chips';
-      var order = [], map = {};
-      boxList.forEach(function (si) {
-        if (map[si] == null) { map[si] = order.length; order.push({ si: si, n: 0 }); }
-        order[map[si]].n++;
-      });
-      order.forEach(function (o) {
-        var c = document.createElement('span');
-        c.className = 'chip';
-        var e = p.entries[o.si];
-        c.textContent = M.displaySize(e.waist, e.length) + ' \u00D7' + o.n;
-        chips.appendChild(c);
-      });
-      card.appendChild(bh);
-      card.appendChild(chips);
-      assign.appendChild(card);
-    });
+    // Per-box contents live under the ☰ Boxes menu once placing begins.
   }
 
   /* ---------------------------------------------------------------- placing */
@@ -913,9 +886,9 @@
     var e = p.entries[stapleIdx];
     var placed = M.replay(p).placedPerSize[stapleIdx];
     var stapled = p.stapled[stapleIdx] || 0;
-    var z = Math.max(0, e.qty - stapled);
+    var z = Math.max(0, e.qty - placed - stapled);
     el('stapleTitle').textContent = M.prettySize(e);
-    el('stapleLine').textContent = placed + ' out of ' + e.qty + ' placed, staple ' + z + ' more';
+    el('stapleLine').textContent = placed + ' out of ' + e.qty + ' placed, ' + z + ' left to staple';
     el('stapleInput').placeholder = String(z);
     return z;
   }
@@ -1003,6 +976,7 @@
     // stapling
     el('stapleBack').onclick = function () { showPlacing(); };
     el('stapleDone').onclick = onStapleDone;
+    el('stapleCancel').onclick = function () { showPlacing(); };
   }
 
   document.addEventListener('DOMContentLoaded', function () {
