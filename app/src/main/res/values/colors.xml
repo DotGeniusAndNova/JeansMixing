@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="brand">#3949AB</color>
+    <color name="brand_dark">#283593</color>
+    <color name="row_yellow">#FFF9C4</color>
+    <color name="ink">#212121</color>
+    <color name="muted">#757575</color>
+    <color name="field_border">#BDBDBD</color>
+</resources>

@@ -1,0 +1,160 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <!-- Header: project name + always-visible Done -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/projectName"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/doneButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/done"
+            android:textSize="18sp" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/entryCounter"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:gravity="center"
+        android:textColor="@color/muted"
+        android:textSize="14sp" />
+
+    <!-- Size row with arrows on the edges -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/leftArrow"
+            android:layout_width="64dp"
+            android:layout_height="96dp"
+            android:text="◀"
+            android:textSize="28sp" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:orientation="vertical">
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/waistField"
+                    android:layout_width="84dp"
+                    android:layout_height="84dp"
+                    android:background="@drawable/field_background"
+                    android:gravity="center"
+                    android:textSize="30sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/ink" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="10dp"
+                    android:layout_marginEnd="10dp"
+                    android:text="x"
+                    android:textSize="30sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/muted" />
+
+                <TextView
+                    android:id="@+id/lengthField"
+                    android:layout_width="84dp"
+                    android:layout_height="84dp"
+                    android:background="@drawable/field_background"
+                    android:gravity="center"
+                    android:textSize="30sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/ink" />
+            </LinearLayout>
+
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/rightArrow"
+            android:layout_width="64dp"
+            android:layout_height="96dp"
+            android:text="▶"
+            android:textSize="28sp" />
+    </LinearLayout>
+
+    <!-- Quantity row: full width below the arrows so it can never slide under them -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="14dp"
+        android:gravity="center"
+        android:orientation="horizontal">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="10dp"
+            android:text="@string/quantity_label"
+            android:textSize="20sp"
+            android:textColor="@color/muted" />
+
+        <TextView
+            android:id="@+id/qtyField"
+            android:layout_width="150dp"
+            android:layout_height="64dp"
+            android:background="@drawable/field_background"
+            android:gravity="center"
+            android:textSize="26sp"
+            android:textStyle="bold"
+            android:textColor="@color/ink" />
+    </LinearLayout>
+
+    <!-- Custom number pad: no system keyboard on this screen -->
+    <GridLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="20dp"
+        android:columnCount="3">
+
+        <Button android:id="@+id/pad1" android:layout_width="92dp" android:layout_height="68dp" android:text="1" android:textSize="24sp" />
+        <Button android:id="@+id/pad2" android:layout_width="92dp" android:layout_height="68dp" android:text="2" android:textSize="24sp" />
+        <Button android:id="@+id/pad3" android:layout_width="92dp" android:layout_height="68dp" android:text="3" android:textSize="24sp" />
+        <Button android:id="@+id/pad4" android:layout_width="92dp" android:layout_height="68dp" android:text="4" android:textSize="24sp" />
+        <Button android:id="@+id/pad5" android:layout_width="92dp" android:layout_height="68dp" android:text="5" android:textSize="24sp" />
+        <Button android:id="@+id/pad6" android:layout_width="92dp" android:layout_height="68dp" android:text="6" android:textSize="24sp" />
+        <Button android:id="@+id/pad7" android:layout_width="92dp" android:layout_height="68dp" android:text="7" android:textSize="24sp" />
+        <Button android:id="@+id/pad8" android:layout_width="92dp" android:layout_height="68dp" android:text="8" android:textSize="24sp" />
+        <Button android:id="@+id/pad9" android:layout_width="92dp" android:layout_height="68dp" android:text="9" android:textSize="24sp" />
+        <Button android:id="@+id/padBack" android:layout_width="92dp" android:layout_height="68dp" android:text="⌫" android:textSize="24sp" />
+        <Button android:id="@+id/pad0" android:layout_width="92dp" android:layout_height="68dp" android:text="0" android:textSize="24sp" />
+        <Button android:id="@+id/padEnter" android:layout_width="92dp" android:layout_height="68dp" android:text="⏎" android:textSize="24sp" />
+    </GridLayout>
+
+</LinearLayout>

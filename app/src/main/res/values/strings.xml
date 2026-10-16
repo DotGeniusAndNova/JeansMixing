@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Rename the app any time by changing this one line. -->
+    <string name="app_name">Jeans Mixing</string>
+    <string name="new_project">＋ New project</string>
+    <string name="previous_projects">Previous projects</string>
+    <string name="no_projects">No projects yet — create one to get started.</string>
+    <string name="done">Done</string>
+    <string name="confirm">Confirm</string>
+    <string name="back">Back</string>
+    <string name="quantity_label">quantity:</string>
+    <string name="review_title">Review sizes</string>
+    <string name="start_placing">Start placing</string>
+    <string name="boxes_menu">☰ Boxes</string>
+    <string name="history">History</string>
+    <string name="flip_cue">🔄 flip after this pair</string>
+    <string name="placing_complete">Placing complete!</string>
+    <string name="review_sizes">Review sizes</string>
+    <string name="back_to_project">Back to project</string>
+    <string name="set_placed">Set placed count</string>
+    <string name="pick_a_box">Pick a box</string>
+    <string name="stapling">stapling</string>
+    <string name="jump_to_size">Jump to size</string>
+</resources>
