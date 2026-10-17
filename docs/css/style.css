@@ -147,7 +147,7 @@ button:disabled { opacity: 0.35; }
 
 /* Placing screen */
 .slot-line { font-size: 1.25rem; font-weight: bold; color: var(--brand-dark); margin: 6px 0; }
-.flip-cue { font-size: 1.05rem; margin: 2px 0 8px; }
+.flip-cue { font-size: 1.05rem; margin: 2px 0 8px; visibility: hidden; }
 .size-big {
   font-size: 2.2rem; font-weight: bold; text-align: center;
   background: var(--card); border: 2px solid var(--brand); border-radius: 12px;
@@ -162,7 +162,9 @@ button:disabled { opacity: 0.35; }
 .add-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 10px 0; }
 .add-row button { min-height: 64px; font-size: 1.4rem; font-weight: bold; }
 .nav-row { display: grid; grid-template-columns: 1fr 1fr 1.4fr; gap: 10px; margin: 10px 0; }
-.nav-row button { font-size: 1.3rem; }
+.nav-row button { font-size: 1.3rem; min-height: 42px; }
+#placingBack { min-height: 41px; }
+#boxMenuBtn, #staplingBtn, #reviewSizesBtn { min-height: 44px; }
 .timeline-label { font-weight: bold; margin: 14px 0 4px; color: var(--muted); }
 .timeline {
   background: var(--card); border: 1px solid var(--border); border-radius: 10px;
@@ -269,6 +271,7 @@ button:disabled { opacity: 0.35; }
     --bg: #fff; --card: #fff; --ink: #212121; --muted: #757575;
     --border: #BDBDBD; --row-yellow: #FFF9C4;
   }
+  body { zoom: 1 !important; }
   .no-print, .topbar, #modalOverlay, #toast { display: none !important; }
   body { max-width: none; background: #fff; height: auto; overflow: visible; }
   .view { display: none !important; padding: 0; }

@@ -9,7 +9,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <title>Jeans Mixing</title>
 <!-- ?v= cache-buster: bump every release so phones fetch fresh files -->
-<link rel="stylesheet" href="css/style.css?v=web-v1.2">
+<link rel="stylesheet" href="css/style.css?v=web-v1.2.1">
 </head>
 <body>
 
@@ -183,6 +183,17 @@
     <div class="set-label">Dark mode</div>
     <button id="setDarkToggle" class="toggle">Off</button>
   </div>
+  <div class="set-row">
+    <div>
+      <div class="set-label">UI scale</div>
+      <div class="sub">Makes everything bigger or smaller</div>
+    </div>
+    <div class="stepper">
+      <button id="scaleDown" aria-label="smaller">&minus;</button>
+      <span id="scaleVal">100%</span>
+      <button id="scaleUp" aria-label="bigger">+</button>
+    </div>
+  </div>
   <div class="btn-col no-print" style="margin-top:20px">
     <button id="resetDefaultsBtn" class="danger">Reset to defaults</button>
   </div>
@@ -205,7 +216,7 @@
 <div id="modalOverlay"><div id="modalBox"></div></div>
 <div id="toast"></div>
 
-<script src="js/model.js?v=web-v1.2"></script>
-<script src="js/app.js?v=web-v1.2"></script>
+<script src="js/model.js?v=web-v1.2.1"></script>
+<script src="js/app.js?v=web-v1.2.1"></script>
 </body>
 </html>

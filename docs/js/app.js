@@ -37,7 +37,8 @@
         { name: 'top pair', layers: 1 }
       ],
       quickAdds: [1, 5, 10],
-      darkMode: false
+      darkMode: false,
+      uiScale: 1
     };
   }
   function loadSettings() {
@@ -48,7 +49,8 @@
       flippingEnabled: s.flippingEnabled !== false,
       bundles: d.bundles,
       quickAdds: d.quickAdds,
-      darkMode: s.darkMode === true
+      darkMode: s.darkMode === true,
+      uiScale: (s.uiScale > 0) ? Math.min(2, Math.max(0.5, s.uiScale)) : d.uiScale
     };
     if (Array.isArray(s.bundles) && s.bundles.length) {
       out.bundles = s.bundles.filter(function (b) {
@@ -74,6 +76,7 @@
     applySettings();
   }
   function applySettings() {
+    document.body.style.zoom = settings.uiScale;
     document.documentElement.setAttribute('data-theme', settings.darkMode ? 'dark' : 'light');
     var meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.setAttribute('content', settings.darkMode ? '#121212' : '#3949AB');
@@ -609,17 +612,17 @@
     var blv = el('bundleLayerView');
     if (!settings.flippingEnabled) {
       blv.textContent = 'layer ' + (inNext + 1) + ', box ' + boxNo;
-      el('flipCue').style.display = 'none';
+      el('flipCue').style.visibility = 'hidden';
     } else {
       var slot = bundleSlot(inNext, settings.bundles);
       if (!slot) {
         blv.textContent = 'layer ' + (inNext + 1) + ', box ' + boxNo;
-        el('flipCue').style.display = 'none';
+        el('flipCue').style.visibility = 'hidden';
       } else {
         blv.textContent = slot.layers === 1
           ? slot.name + ', box ' + boxNo
           : slot.name + ', layer ' + slot.layer + ', box ' + boxNo;
-        el('flipCue').style.display = (slot.lastLayer && !slot.isLast) ? '' : 'none';
+        el('flipCue').style.visibility = (slot.lastLayer && !slot.isLast) ? 'visible' : 'hidden';
       }
     }
 
@@ -1060,6 +1063,14 @@
     var dt = el('setDarkToggle');
     dt.textContent = settings.darkMode ? 'On' : 'Off';
     dt.classList.toggle('on', settings.darkMode);
+    el('scaleVal').textContent = Math.round(settings.uiScale * 100) + '%';
+  }
+
+  function bumpScale(d) {
+    var v = Math.round((settings.uiScale + d) * 100) / 100;
+    settings.uiScale = Math.min(2, Math.max(0.5, v));
+    saveSettings();
+    renderSettings();
   }
 
   function renderQuickAddInputs() {
@@ -1349,10 +1360,12 @@
       saveSettings();
       renderSettings();
     };
+    el('scaleDown').onclick = function () { bumpScale(-0.05); };
+    el('scaleUp').onclick = function () { bumpScale(0.05); };
     el('resetDefaultsBtn').onclick = function () {
       showModal({
         title: 'Reset to defaults?',
-        message: 'Restores pairs per box (25), bundles, quick-add buttons and dark mode to the original settings.',
+        message: 'Restores pairs per box (25), bundles, quick-add buttons, UI scale and dark mode to the original settings.',
         rowButtons: true,
         buttons: [
           {
