@@ -146,6 +146,14 @@ button:disabled { opacity: 0.35; }
   background: var(--card); border: 1px solid var(--border); border-radius: 10px;
   max-height: 220px; overflow-y: auto; padding: 8px 12px;
 }
+/* Placing: the history timeline fills whatever screen space is left and
+   scrolls internally — the page itself never grows from history. */
+#placingMain { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+#placingMain .timeline {
+  flex: 1; min-height: 80px; max-height: none;
+  overscroll-behavior: contain;
+}
+#placingComplete { flex: 1; min-height: 0; }
 .timeline div { padding: 5px 0; border-bottom: 1px solid #f0f0f0; font-size: 0.95rem; }
 .timeline div:last-child { border-bottom: none; }
 .reset-link {
