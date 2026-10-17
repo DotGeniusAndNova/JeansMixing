@@ -943,9 +943,26 @@
     }
   }
 
-  function padRelease(pid) {
+  /* Release: a press only counts if the finger is still on its button —
+     sliding off cancels it (nothing commits, nothing stays highlighted).
+     pointercancel always cancels. */
+  function padRelease(pid, x, y) {
     for (var i = 0; i < padQueue.length; i++) {
-      if (padQueue[i].pid === pid) { padQueue[i].done = true; break; }
+      var item = padQueue[i];
+      if (item.pid !== pid) continue;
+      item.elm.classList.remove('pressed');
+      var onButton = false;
+      if (x !== undefined) {
+        var t = document.elementFromPoint(x, y);
+        onButton = !!t && item.elm.contains(t);
+      }
+      if (onButton) {
+        item.done = true;
+      } else {
+        padQueue.splice(i, 1); // slid off (or cancelled): the press never happened
+        item.elm._padCancelledAt = Date.now();
+      }
+      break;
     }
     padFlush();
   }
@@ -962,7 +979,9 @@
     });
     // Keyboard / assistive tech: a click with no preceding pointer press still works.
     elm.addEventListener('click', function () {
-      if (Date.now() - (elm._padCommitAt || 0) < 600) return; // already committed via pointer
+      var now = Date.now();
+      // Already committed via pointer, or the press was slid off and cancelled.
+      if (now - (elm._padCommitAt || 0) < 600 || now - (elm._padCancelledAt || 0) < 600) return;
       run();
     });
   }
@@ -970,8 +989,18 @@
   function wire() {
     // Pad releases are heard at document level so a finger lifting off-button
     // still resolves its queued press instead of jamming the queue.
-    document.addEventListener('pointerup', function (e) { padRelease(e.pointerId); });
+    document.addEventListener('pointerup', function (e) { padRelease(e.pointerId, e.clientX, e.clientY); });
     document.addEventListener('pointercancel', function (e) { padRelease(e.pointerId); });
+    // Live pressed feedback while sliding: leaving the button un-highlights it.
+    document.addEventListener('pointermove', function (e) {
+      if (!padQueue.length) return;
+      for (var i = 0; i < padQueue.length; i++) {
+        var item = padQueue[i];
+        if (item.pid !== e.pointerId || item.done) continue;
+        var t = document.elementFromPoint(e.clientX, e.clientY);
+        item.elm.classList.toggle('pressed', !!t && item.elm.contains(t));
+      }
+    });
     // projects
     el('newProjectBtn').onclick = function () {
       var name = M.Store.uniqueName(projects, M.projectDisplayName(new Date()));

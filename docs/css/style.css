@@ -11,6 +11,11 @@
   --card: #FFFFFF;
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+/* No text selection or iOS long-press callout on tappable controls. */
+button, .field, .size-big, .placed-line {
+  -webkit-user-select: none; user-select: none;
+  -webkit-touch-callout: none;
+}
 html { font-size: 18px; }
 html, body { height: 100%; overscroll-behavior: none; }
 body {
