@@ -79,11 +79,12 @@
     applySettings();
   }
   function applySettings() {
-    // Zoom on the ROOT element acts like the browser's own page zoom: the layout
-    // viewport itself scales, so 100dvh still fills the screen and content gets
-    // more room (no blank gap, actually less scrolling). Zoom on body instead
-    // just shrinks body's box inside an unchanged viewport — that was the v1.2.1 bug.
-    document.documentElement.style.zoom = settings.uiScale;
+    // UI scale: root font-size drives every rem in the stylesheet, so the whole
+    // app shrinks/grows and reflows naturally. body stays 100dvh (viewport units
+    // don't care about font-size), so there's never a blank gap, and smaller
+    // content genuinely means less scrolling. (CSS `zoom` can't do this: it just
+    // shrinks the box inside an unchanged viewport — the v1.2.1/v1.2.2 bug.)
+    document.documentElement.style.setProperty('--scale', settings.uiScale);
     document.documentElement.setAttribute('data-theme', settings.darkMode ? 'dark' : 'light');
     var meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.setAttribute('content', settings.darkMode ? '#121212' : '#3949AB');
