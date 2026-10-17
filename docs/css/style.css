@@ -271,7 +271,7 @@ button:disabled { opacity: 0.35; }
     --bg: #fff; --card: #fff; --ink: #212121; --muted: #757575;
     --border: #BDBDBD; --row-yellow: #FFF9C4;
   }
-  body { zoom: 1 !important; }
+  html { zoom: 1 !important; }
   .no-print, .topbar, #modalOverlay, #toast { display: none !important; }
   body { max-width: none; background: #fff; height: auto; overflow: visible; }
   .view { display: none !important; padding: 0; }

@@ -76,7 +76,11 @@
     applySettings();
   }
   function applySettings() {
-    document.body.style.zoom = settings.uiScale;
+    // Zoom on the ROOT element acts like the browser's own page zoom: the layout
+    // viewport itself scales, so 100dvh still fills the screen and content gets
+    // more room (no blank gap, actually less scrolling). Zoom on body instead
+    // just shrinks body's box inside an unchanged viewport — that was the v1.2.1 bug.
+    document.documentElement.style.zoom = settings.uiScale;
     document.documentElement.setAttribute('data-theme', settings.darkMode ? 'dark' : 'light');
     var meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.setAttribute('content', settings.darkMode ? '#121212' : '#3949AB');
