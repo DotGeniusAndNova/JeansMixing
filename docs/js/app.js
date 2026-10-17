@@ -26,6 +26,7 @@
   function show(name) {
     VIEWS.forEach(function (v) { el('view-' + v).classList.toggle('active', v === name); });
     window.scrollTo(0, 0);
+    padQueue.length = 0; // drop any in-flight multi-touch presses on navigation
   }
 
   /* ------------------------------------------------------------------ modal */
@@ -926,7 +927,51 @@
   }
 
   /* ------------------------------------------------------------------- wiring */
+
+  /* Multi-touch pad: presses commit in touch-START order, no matter the lift
+     order. Each finger's press is queued on pointerdown; the queue flushes
+     head-first on pointerup/cancel, so the first finger down always wins.
+     Handles any number of simultaneous touches. */
+  var padQueue = []; // [{pid, elm, run, done}]
+
+  function padFlush() {
+    while (padQueue.length && padQueue[0].done) {
+      var item = padQueue.shift();
+      item.elm.classList.remove('pressed');
+      item.run();
+      item.elm._padCommitAt = Date.now();
+    }
+  }
+
+  function padRelease(pid) {
+    for (var i = 0; i < padQueue.length; i++) {
+      if (padQueue[i].pid === pid) { padQueue[i].done = true; break; }
+    }
+    padFlush();
+  }
+
+  function wirePadButton(elm, run) {
+    elm.style.touchAction = 'none';
+    elm.addEventListener('pointerdown', function (e) {
+      e.preventDefault();
+      for (var i = 0; i < padQueue.length; i++) {
+        if (padQueue[i].pid === e.pointerId) return; // already tracking this finger
+      }
+      padQueue.push({ pid: e.pointerId, elm: elm, run: run, done: false });
+      elm.classList.add('pressed');
+    });
+    // Keyboard / assistive tech: a click with no preceding pointer press still works.
+    elm.addEventListener('click', function () {
+      if (Date.now() - (elm._padCommitAt || 0) < 600) return; // already committed via pointer
+      run();
+    });
+  }
+
   function wire() {
+    // Pad releases are heard at document level so a finger lifting off-button
+    // still resolves its queued press instead of jamming the queue.
+    document.addEventListener('pointerup', function (e) { padRelease(e.pointerId); });
+    document.addEventListener('pointercancel', function (e) { padRelease(e.pointerId); });
     // projects
     el('newProjectBtn').onclick = function () {
       var name = M.Store.uniqueName(projects, M.projectDisplayName(new Date()));
@@ -945,9 +990,11 @@
     el('lengthField').onclick = function () { tapField(1); };
     el('qtyField').onclick = function () { tapField(2); };
     var digits = ['pad0', 'pad1', 'pad2', 'pad3', 'pad4', 'pad5', 'pad6', 'pad7', 'pad8', 'pad9'];
-    digits.forEach(function (id, d) { el(id).onclick = function () { onDigit(String(d)); }; });
-    el('padBack').onclick = onBackspace;
-    el('padEnter').onclick = onEntryNext;
+    digits.forEach(function (id, d) {
+      wirePadButton(el(id), function () { onDigit(String(d)); });
+    });
+    wirePadButton(el('padBack'), onBackspace);
+    wirePadButton(el('padEnter'), onEntryNext);
     // review
     el('reviewBack').onclick = function () { showEntry(); };
     el('confirmBtn').onclick = onConfirm;

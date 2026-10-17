@@ -98,6 +98,8 @@ button:disabled { opacity: 0.35; }
 .pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 6px; }
 .pad button { min-height: 64px; font-size: 1.5rem; font-weight: bold; }
 .pad button.enter { background: var(--brand); color: #fff; }
+.pad button.pressed { background: #C5CAE9; }
+.pad button.enter.pressed { background: var(--brand-dark); color: #fff; }
 
 /* Review / locked tables */
 .rows { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--card); }
