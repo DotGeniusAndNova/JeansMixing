@@ -9,7 +9,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <title>Jeans Mixing</title>
 <!-- ?v= cache-buster: bump every release so phones fetch fresh files -->
-<link rel="stylesheet" href="css/style.css?v=web-v1.2.2-2">
+<link rel="stylesheet" href="css/style.css?v=web-v1.2.3">
 </head>
 <body>
 
@@ -60,6 +60,7 @@
   <div class="topbar no-print">
     <button id="reviewBack">&larr; Back</button>
     <div class="title" id="reviewTitle"></div>
+    <button id="reviewSettings" class="icon-btn" aria-label="Settings">&#9881;</button>
   </div>
   <div class="rows" id="reviewRows"></div>
   <div class="total-line" id="reviewTotal"></div>
@@ -73,6 +74,7 @@
   <div class="topbar no-print">
     <button id="lockedBack">&larr; Projects</button>
     <div class="title" id="lockedTitle"></div>
+    <button id="lockedSettings" class="icon-btn" aria-label="Settings">&#9881;</button>
   </div>
   <div class="rows" id="lockedRows"></div>
   <div class="total-line" id="lockedTotal"></div>
@@ -88,6 +90,7 @@
   <div class="topbar no-print">
     <button id="placingBack">&larr; Project</button>
     <div class="title" id="placingSubtitle"></div>
+    <button id="placingSettings" class="icon-btn" aria-label="Settings">&#9881;</button>
   </div>
   <div id="placingMain">
     <div class="slot-line" id="bundleLayerView"></div>
@@ -127,6 +130,7 @@
   <div class="topbar no-print">
     <button id="boxBack">&larr; Back</button>
     <div class="title" id="boxTitle"></div>
+    <button id="boxSettings" class="icon-btn" aria-label="Settings">&#9881;</button>
   </div>
   <table class="btable">
     <thead><tr><th>Pair</th><th>Size</th><th>Bundle</th><th>Layer</th></tr></thead>
@@ -139,6 +143,7 @@
   <div class="topbar no-print">
     <button id="stapleBack">&larr; Back</button>
     <div class="title">Stapling</div>
+    <button id="stapleSettings" class="icon-btn" aria-label="Settings">&#9881;</button>
   </div>
   <div class="staple-big" id="stapleTitle"></div>
   <div class="staple-line" id="stapleLine"></div>
@@ -153,22 +158,22 @@
 <section id="view-settings" class="view">
   <div class="topbar no-print">
     <button id="settingsBack">&larr; Back</button>
-    <div class="title">Settings</div>
+    <div class="title" id="settingsTitle">Settings</div>
   </div>
-  <div class="set-row">
-    <div>
-      <div class="set-label">Pairs per box</div>
-      <div class="sub">Applies to new projects</div>
-    </div>
+  <div class="set-head" id="projectSectionLabel">Defaults for new projects</div>
+  <div class="sub" id="settingsDisclaimer" style="margin-bottom:0.25rem"></div>
+  <div class="set-row" id="pairsRow">
+    <div class="set-label">Pairs per box</div>
     <input id="setPairs" class="num-input-sm" type="number" inputmode="numeric" min="1">
   </div>
-  <div class="set-row">
+  <div class="set-row" id="flipRow">
     <div class="set-label">Flipping (bundles)</div>
     <button id="setFlipToggle" class="toggle">On</button>
   </div>
   <div class="btn-col no-print" id="manageBundlesWrap">
     <button id="manageBundlesBtn">Manage bundles</button>
   </div>
+  <div class="set-head">App</div>
   <div class="set-label" style="margin:0.889rem 0 0.222rem">Quick-add buttons</div>
   <div class="set-row">
     <div class="sub">How many (1&ndash;5)</div>
@@ -194,7 +199,7 @@
       <button id="scaleUp" aria-label="bigger">+</button>
     </div>
   </div>
-  <div class="btn-col no-print" style="margin-top:1.111rem">
+  <div class="btn-col no-print" id="resetWrap" style="margin-top:1.111rem">
     <button id="resetDefaultsBtn" class="danger">Reset to defaults</button>
   </div>
 </section>
@@ -216,7 +221,7 @@
 <div id="modalOverlay"><div id="modalBox"></div></div>
 <div id="toast"></div>
 
-<script src="js/model.js?v=web-v1.2.2-2"></script>
-<script src="js/app.js?v=web-v1.2.2-2"></script>
+<script src="js/model.js?v=web-v1.2.3"></script>
+<script src="js/app.js?v=web-v1.2.3"></script>
 </body>
 </html>

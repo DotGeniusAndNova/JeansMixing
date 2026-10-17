@@ -232,6 +232,12 @@ button:disabled { opacity: 0.35; }
   gap: 0.667rem; padding: 0.667rem 0.111rem; border-bottom: 0.056rem solid #eee;
 }
 .set-label { font-weight: bold; font-size: 1.05rem; }
+.set-head {
+  font-size: 0.85rem; font-weight: bold; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.05em; margin: 1rem 0 0.25rem;
+}
+.set-head:first-of-type { margin-top: 0.25rem; }
+#setPairs:disabled { opacity: 0.5; }
 .toggle { min-width: 4.889rem; }
 .toggle.on { background: var(--brand); border-color: var(--brand); color: #fff; }
 .num-input-sm {

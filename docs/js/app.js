@@ -8,7 +8,7 @@
   var M = window.JM;
   // Single source of truth for the displayed version (Projects title).
   // Bump this with every release, alongside the ?v= cache-busters.
-  var APP_VERSION = '1.2.2';
+  var APP_VERSION = '1.2.3';
 
   function el(id) { return document.getElementById(id); }
 
@@ -89,8 +89,28 @@
     var meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.setAttribute('content', settings.darkMode ? '#121212' : '#3949AB');
   }
-  function bundleLayersTotal() {
-    return settings.bundles.reduce(function (s, b) { return s + b.layers; }, 0);
+  function bundleLayersTotal(t) {
+    return (t || settings).bundles.reduce(function (s, b) { return s + b.layers; }, 0);
+  }
+  function cloneBundles(list) {
+    return list.map(function (b) { return { name: b.name, layers: b.layers }; });
+  }
+  /* The project (or global settings) whose pairs/bundles/flipping the settings
+     screens are currently editing. */
+  var settingsCtx = { mode: 'defaults', project: null };
+  function settingsTarget() {
+    if (settingsCtx.mode === 'project' && settingsCtx.project) return settingsCtx.project;
+    return settings;
+  }
+  function saveSettingsTarget() {
+    if (settingsCtx.mode === 'project' && settingsCtx.project) persist();
+    else saveSettings();
+  }
+  function projectFlip(p) {
+    return (typeof p.flippingEnabled === 'boolean') ? p.flippingEnabled : settings.flippingEnabled;
+  }
+  function projectBundles(p) {
+    return Array.isArray(p.bundles) ? p.bundles : settings.bundles;
   }
   /* Which bundle/layer is pair #inBox (0-based) inside its box?
      Returns {name, layer, layers, isLast, lastLayer} or null when past the end. */
@@ -107,8 +127,13 @@
     }
     return null;
   }
-  // Older saved projects predate per-project box size: they were all 25/box.
-  projects.forEach(function (p) { if (!(p.pairsPerBox > 0)) p.pairsPerBox = 25; });
+  // Older saved projects predate per-project settings: they were all 25/box,
+  // flipping on, with the default bundles.
+  projects.forEach(function (p) {
+    if (!(p.pairsPerBox > 0)) p.pairsPerBox = 25;
+    if (!Array.isArray(p.bundles)) p.bundles = cloneBundles(defaultSettings().bundles);
+    if (typeof p.flippingEnabled !== 'boolean') p.flippingEnabled = settings.flippingEnabled;
+  });
   applySettings();
 
   /* ------------------------------------------------------------ navigation */
@@ -618,11 +643,12 @@
     var inNext = r.boxCounts[r.nextBox];
     var boxNo = r.nextBox + 1;
     var blv = el('bundleLayerView');
-    if (!settings.flippingEnabled) {
+    var pFlip = projectFlip(p), pBundles = projectBundles(p);
+    if (!pFlip) {
       blv.textContent = 'layer ' + (inNext + 1) + ', box ' + boxNo;
       el('flipCue').style.visibility = 'hidden';
     } else {
-      var slot = bundleSlot(inNext, settings.bundles);
+      var slot = bundleSlot(inNext, pBundles);
       if (!slot) {
         blv.textContent = 'layer ' + (inNext + 1) + ', box ' + boxNo;
         el('flipCue').style.visibility = 'hidden';
@@ -977,11 +1003,12 @@
       var tr = document.createElement('tr');
       if (pos % 2 === 1) tr.className = 'alt';
       var bundle, layer;
-      if (!settings.flippingEnabled) {
+      var pFlip = projectFlip(p), pBundles = projectBundles(p);
+      if (!pFlip) {
         bundle = '\u2013';
         layer = String(pos + 1);
       } else {
-        var bslot = bundleSlot(pos, settings.bundles);
+        var bslot = bundleSlot(pos, pBundles);
         if (!bslot) {
           bundle = '\u2013';
           layer = String(pos + 1);
@@ -1058,20 +1085,42 @@
   }
 
   /* ---------------------------------------------------------------- settings */
-  function showSettings() { renderSettings(); show('settings'); }
+  // Two modes: 'defaults' (from the main menu — edits what new projects start
+  // with) and 'project' (from inside a project — edits that project's own
+  // pairs/bundles/flipping; app-wide prefs stay global in both modes).
+  function showSettings(mode, project) {
+    if (mode) settingsCtx = { mode: mode, project: project || null };
+    renderSettings();
+    show('settings');
+  }
 
   function renderSettings() {
-    el('setPairs').value = settings.pairsPerBox;
+    var t = settingsTarget();
+    var isProj = settingsCtx.mode === 'project' && !!settingsCtx.project;
+    var locked = isProj && !!settingsCtx.project.locked;
+    el('settingsTitle').textContent = isProj ? 'Project settings' : 'Settings';
+    el('projectSectionLabel').textContent = isProj ? 'This project' : 'Defaults for new projects';
+    el('settingsDisclaimer').textContent = !isProj
+      ? 'Changing these settings will affect new projects, not current ones.'
+      : (locked
+        ? 'These were locked in with the project.'
+        : 'Changing these settings will affect this project only.');
+    var sp = el('setPairs');
+    sp.value = t.pairsPerBox;
+    sp.disabled = locked;
     var ft = el('setFlipToggle');
-    ft.textContent = settings.flippingEnabled ? 'On' : 'Off';
-    ft.classList.toggle('on', settings.flippingEnabled);
-    el('manageBundlesWrap').style.display = settings.flippingEnabled ? '' : 'none';
+    ft.textContent = t.flippingEnabled ? 'On' : 'Off';
+    ft.classList.toggle('on', t.flippingEnabled);
+    ft.disabled = locked;
+    el('manageBundlesWrap').style.display = t.flippingEnabled ? '' : 'none';
+    el('manageBundlesBtn').disabled = locked;
     el('qCount').textContent = settings.quickAdds.length;
     renderQuickAddInputs();
     var dt = el('setDarkToggle');
     dt.textContent = settings.darkMode ? 'On' : 'Off';
     dt.classList.toggle('on', settings.darkMode);
     el('scaleVal').textContent = Math.round(settings.uiScale * 100) + '%';
+    el('resetWrap').style.display = locked ? 'none' : '';
   }
 
   function bumpScale(d) {
@@ -1121,9 +1170,10 @@
   function showBundles() { renderBundles(); show('bundles'); }
 
   function renderBundles() {
+    var t = settingsTarget();
     var list = el('bundleList');
     list.innerHTML = '';
-    settings.bundles.forEach(function (b, i) {
+    t.bundles.forEach(function (b, i) {
       var btn = document.createElement('button');
       btn.className = 'bundle-row';
       var meta = document.createElement('div');
@@ -1144,20 +1194,21 @@
       btn.onclick = function () { openBundleEditor(i); };
       list.appendChild(btn);
     });
-    if (!settings.bundles.length) {
+    if (!t.bundles.length) {
       var em = document.createElement('div');
       em.className = 'empty';
       em.textContent = 'No bundles \u2014 add one with \uff0b, or go back and flipping will be turned off.';
       list.appendChild(em);
     }
-    var total = bundleLayersTotal();
+    var total = bundleLayersTotal(t);
     el('bundleTotalHint').textContent =
-      total + ' layers total \u00b7 each box holds ' + settings.pairsPerBox +
-      (total === settings.pairsPerBox ? ' \u2713' : ' \u2014 doesn\'t match');
+      total + ' layers total \u00b7 each box holds ' + t.pairsPerBox +
+      (total === t.pairsPerBox ? ' \u2713' : ' \u2014 doesn\'t match');
   }
 
   function openBundleEditor(i) {
-    var b = settings.bundles[i];
+    var t = settingsTarget();
+    var b = t.bundles[i];
     if (!b) return;
     showModal({
       title: 'Edit bundle',
@@ -1170,14 +1221,14 @@
           label: 'Save', primary: true, onClick: function (o) {
             b.name = (o.inputs[0].value.trim() || b.name).slice(0, 24);
             b.layers = Math.max(1, parseInt(o.inputs[1].value, 10) || b.layers);
-            saveSettings();
+            saveSettingsTarget();
             renderBundles();
           }
         },
         {
           label: 'Delete', danger: true, onClick: function () {
-            settings.bundles.splice(i, 1);
-            saveSettings();
+            t.bundles.splice(i, 1);
+            saveSettingsTarget();
             renderBundles();
           }
         },
@@ -1187,30 +1238,31 @@
   }
 
   function onBundlesDone() {
-    if (!settings.bundles.length) {
+    var t = settingsTarget();
+    if (!t.bundles.length) {
       // Deleting them all just means no bundles: turn flipping off.
-      settings.flippingEnabled = false;
-      saveSettings();
+      t.flippingEnabled = false;
+      saveSettingsTarget();
       toast('Bundles turned off');
       showSettings();
       return;
     }
-    var total = bundleLayersTotal();
-    if (total !== settings.pairsPerBox) {
+    var total = bundleLayersTotal(t);
+    if (total !== t.pairsPerBox) {
       showModal({
         title: 'Layers don\'t match',
         message: 'Your bundles add up to ' + total + ' layers, but each box holds ' +
-                 settings.pairsPerBox + ' pairs.',
+                 t.pairsPerBox + ' pairs.',
         rowButtons: true,
         buttons: [
           {
             label: 'Use ' + total + ' per box', primary: true, onClick: function () {
-              settings.pairsPerBox = total;
-              saveSettings();
+              t.pairsPerBox = total;
+              saveSettingsTarget();
               showSettings();
             }
           },
-          { label: 'Keep ' + settings.pairsPerBox, onClick: function () { showSettings(); } }
+          { label: 'Keep ' + t.pairsPerBox, onClick: function () { showSettings(); } }
         ]
       });
       return;
@@ -1298,15 +1350,23 @@
       var name = M.Store.uniqueName(projects, M.projectDisplayName(new Date()));
       var p = M.Store.blankProject(name);
       p.pairsPerBox = settings.pairsPerBox;
+      p.flippingEnabled = settings.flippingEnabled;
+      p.bundles = cloneBundles(settings.bundles);
       projects.push(p);
       ui.activeId = p.id;
       persist();
       showEntry();
     };
-    el('projectsSettings').onclick = function () { settingsReturn = 'projects'; showSettings(); };
+    el('projectsSettings').onclick = function () { settingsReturn = 'projects'; showSettings('defaults'); };
     // entry
     el('entryBack').onclick = function () { saveDraft(); showProjects(); };
-    el('entrySettings').onclick = function () { saveDraft(); settingsReturn = 'entry'; showSettings(); };
+    el('entrySettings').onclick = function () { saveDraft(); settingsReturn = 'entry'; showSettings('project', activeProject()); };
+    // settings from anywhere: project mode (read-only after lock), back where you came from
+    el('reviewSettings').onclick = function () { settingsReturn = 'review'; showSettings('project', activeProject()); };
+    el('lockedSettings').onclick = function () { settingsReturn = 'locked'; showSettings('project', activeProject()); };
+    el('placingSettings').onclick = function () { settingsReturn = 'placing'; showSettings('project', activeProject()); };
+    el('boxSettings').onclick = function () { settingsReturn = 'box'; showSettings('project', activeProject()); };
+    el('stapleSettings').onclick = function () { settingsReturn = 'stapling'; showSettings('project', activeProject()); };
     el('entryDone').onclick = onEntryDone;
     el('entryLeft').onclick = onEntryPrev;
     el('entryRight').onclick = onEntryNext;
@@ -1347,17 +1407,27 @@
     el('stapleCancel').onclick = function () { showPlacing(); };
     // settings
     el('settingsBack').onclick = function () {
-      if (settingsReturn === 'entry') showEntry(); else showProjects();
+      switch (settingsReturn) {
+        case 'entry': showEntry(); break;
+        case 'review': showReview(); break;
+        case 'locked': showLocked(); break;
+        case 'placing': showPlacing(); break;
+        case 'box': showBox(boxIdx); break;
+        case 'stapling': showStapling(); break;
+        default: showProjects();
+      }
     };
     el('setPairs').addEventListener('change', function () {
-      var v = Math.max(1, parseInt(el('setPairs').value, 10) || settings.pairsPerBox);
-      settings.pairsPerBox = v;
+      var t = settingsTarget();
+      var v = Math.max(1, parseInt(el('setPairs').value, 10) || t.pairsPerBox);
+      t.pairsPerBox = v;
       el('setPairs').value = v;
-      saveSettings();
+      saveSettingsTarget();
     });
     el('setFlipToggle').onclick = function () {
-      settings.flippingEnabled = !settings.flippingEnabled;
-      saveSettings();
+      var t = settingsTarget();
+      t.flippingEnabled = !t.flippingEnabled;
+      saveSettingsTarget();
       renderSettings();
     };
     el('manageBundlesBtn').onclick = function () { showBundles(); };
@@ -1371,15 +1441,26 @@
     el('scaleDown').onclick = function () { bumpScale(-0.05); };
     el('scaleUp').onclick = function () { bumpScale(0.05); };
     el('resetDefaultsBtn').onclick = function () {
+      var isProj = settingsCtx.mode === 'project' && !!settingsCtx.project;
       showModal({
         title: 'Reset to defaults?',
-        message: 'Restores pairs per box (25), bundles, quick-add buttons, UI scale and dark mode to the original settings.',
+        message: isProj
+          ? 'Reset this project\'s pairs per box, flipping and bundles to the current defaults?'
+          : 'Restores pairs per box (25), bundles, quick-add buttons, UI scale and dark mode to the original settings.',
         rowButtons: true,
         buttons: [
           {
             label: 'Reset', danger: true, onClick: function () {
-              settings = defaultSettings();
-              saveSettings();
+              if (isProj) {
+                var p = settingsCtx.project;
+                p.pairsPerBox = settings.pairsPerBox;
+                p.flippingEnabled = settings.flippingEnabled;
+                p.bundles = cloneBundles(settings.bundles);
+                persist();
+              } else {
+                settings = defaultSettings();
+                saveSettings();
+              }
               renderSettings();
               toast('Settings reset');
             }
@@ -1390,9 +1471,10 @@
     };
     // bundles
     el('bundleAdd').onclick = function () {
-      var n = settings.bundles.length + 1;
-      settings.bundles.push({ name: 'bundle ' + n, layers: 6 });
-      saveSettings();
+      var t = settingsTarget();
+      var n = t.bundles.length + 1;
+      t.bundles.push({ name: 'bundle ' + n, layers: 6 });
+      saveSettingsTarget();
       renderBundles();
     };
     el('bundlesBack').onclick = onBundlesDone;
