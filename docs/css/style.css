@@ -10,6 +10,23 @@
   --bg: #FAFAFA;
   --card: #FFFFFF;
 }
+[data-theme="dark"] {
+  --brand: #7986CB;
+  --brand-dark: #9FA8DA;
+  --row-yellow: #37300F;
+  --ink: #E8E8E8;
+  --muted: #9E9E9E;
+  --border: #424242;
+  --danger: #EF9A9A;
+  --bg: #121212;
+  --card: #1E1E1E;
+}
+[data-theme="dark"] .chip { background: #2C387E; }
+[data-theme="dark"] .btable th { background: #2C387E; }
+[data-theme="dark"] .trow { border-bottom-color: #2c2c2c; }
+[data-theme="dark"] .timeline div { border-bottom-color: #2c2c2c; }
+[data-theme="dark"] #modalBox { background: #1E1E1E; }
+[data-theme="dark"] #toast { background: #E8E8E8; color: #121212; }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 /* No text selection or iOS long-press callout on tappable controls. */
 button, .field, .size-big, .placed-line {
@@ -203,6 +220,39 @@ button:disabled { opacity: 0.35; }
 #modalBox .mbtns.row2 { flex-direction: row; }
 #modalBox .mbtns.row2 button { flex: 1; }
 
+/* Settings */
+.icon-btn {
+  border: none; background: none; color: var(--muted);
+  font-size: 1.35rem; min-height: 46px; padding: 6px 10px;
+}
+.set-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; padding: 12px 2px; border-bottom: 1px solid #eee;
+}
+.set-label { font-weight: bold; font-size: 1.05rem; }
+.toggle { min-width: 88px; }
+.toggle.on { background: var(--brand); border-color: var(--brand); color: #fff; }
+.num-input-sm {
+  width: 92px; font-size: 1.25rem; text-align: center;
+  min-height: 52px; border: 2px solid var(--border); border-radius: 8px;
+  background: var(--card); color: var(--ink);
+}
+.stepper { display: flex; align-items: center; gap: 10px; }
+.stepper button { min-height: 48px; min-width: 54px; font-size: 1.3rem; }
+.stepper span { font-size: 1.2rem; font-weight: bold; min-width: 30px; text-align: center; }
+.bundle-row {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px; margin: 8px 0; width: 100%; text-align: left;
+}
+.bundle-row .meta { flex: 1; min-width: 0; }
+.bundle-row .name { font-weight: bold; font-size: 1.05rem; }
+.bundle-row .sub2 { color: var(--muted); font-size: 0.9rem; margin-top: 2px; }
+.bundle-row .chev { color: var(--muted); font-size: 1.4rem; }
+.mlabel { font-size: 0.9rem; color: var(--muted); margin: 10px 0 4px; }
+.mlabel:first-of-type { margin-top: 0; }
+[data-theme="dark"] .set-row { border-bottom-color: #2c2c2c; }
+
 /* Toast */
 #toast {
   position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%);
@@ -213,8 +263,12 @@ button:disabled { opacity: 0.35; }
 
 .empty { color: var(--muted); text-align: center; margin: 24px 0; }
 
-/* Print: only the locked assignment prints cleanly. */
+/* Print: only the locked assignment prints cleanly, always in light colors. */
 @media print {
+  :root {
+    --bg: #fff; --card: #fff; --ink: #212121; --muted: #757575;
+    --border: #BDBDBD; --row-yellow: #FFF9C4;
+  }
   .no-print, .topbar, #modalOverlay, #toast { display: none !important; }
   body { max-width: none; background: #fff; height: auto; overflow: visible; }
   .view { display: none !important; padding: 0; }

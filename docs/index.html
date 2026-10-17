@@ -9,13 +9,16 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <title>Jeans Mixing</title>
 <!-- ?v= cache-buster: bump every release so phones fetch fresh files -->
-<link rel="stylesheet" href="css/style.css?v=web-v1.1">
+<link rel="stylesheet" href="css/style.css?v=web-v1.2">
 </head>
 <body>
 
 <!-- Projects -->
 <section id="view-projects" class="view">
-  <h1>Jeans Mixing</h1>
+  <div class="topbar no-print">
+    <div class="title">Jeans Mixing</div>
+    <button id="projectsSettings" class="icon-btn" aria-label="Settings">&#9881;</button>
+  </div>
   <div class="btn-col no-print">
     <button id="newProjectBtn" class="primary">&#65291; New project</button>
   </div>
@@ -29,6 +32,7 @@
   <div class="topbar no-print">
     <button id="entryBack">&larr;</button>
     <div class="title" id="entryProjectName"></div>
+    <button id="entrySettings" class="icon-btn" aria-label="Settings">&#9881;</button>
     <button id="entryDone" class="primary">Done</button>
   </div>
   <div class="counter" id="entryCounter"></div>
@@ -90,9 +94,7 @@
     <div class="flip-cue" id="flipCue">&#128260; flip after this pair</div>
     <div class="size-big" id="sizeBig"></div>
     <div class="placed-line" id="placedView"></div>
-    <div class="add-row">
-      <button id="add1">+1</button><button id="add5">+5</button><button id="add10">+10</button>
-    </div>
+    <div class="add-row" id="addRow"></div>
     <div class="nav-row">
       <button id="placeUndo">&#8617; Undo</button>
       <button id="placeLeft">&larr;</button>
@@ -147,10 +149,63 @@
   </div>
 </section>
 
+<!-- Settings -->
+<section id="view-settings" class="view">
+  <div class="topbar no-print">
+    <button id="settingsBack">&larr; Back</button>
+    <div class="title">Settings</div>
+  </div>
+  <div class="set-row">
+    <div>
+      <div class="set-label">Pairs per box</div>
+      <div class="sub">Applies to new projects</div>
+    </div>
+    <input id="setPairs" class="num-input-sm" type="number" inputmode="numeric" min="1">
+  </div>
+  <div class="set-row">
+    <div class="set-label">Flipping (bundles)</div>
+    <button id="setFlipToggle" class="toggle">On</button>
+  </div>
+  <div class="btn-col no-print" id="manageBundlesWrap">
+    <button id="manageBundlesBtn">Manage bundles</button>
+  </div>
+  <div class="set-label" style="margin:16px 0 4px">Quick-add buttons</div>
+  <div class="set-row">
+    <div class="sub">How many (1&ndash;5)</div>
+    <div class="stepper">
+      <button id="qDown" aria-label="fewer buttons">&minus;</button>
+      <span id="qCount">3</span>
+      <button id="qUp" aria-label="more buttons">+</button>
+    </div>
+  </div>
+  <div id="quickAddInputs"></div>
+  <div class="set-row">
+    <div class="set-label">Dark mode</div>
+    <button id="setDarkToggle" class="toggle">Off</button>
+  </div>
+  <div class="btn-col no-print" style="margin-top:20px">
+    <button id="resetDefaultsBtn" class="danger">Reset to defaults</button>
+  </div>
+</section>
+
+<!-- Manage bundles -->
+<section id="view-bundles" class="view">
+  <div class="topbar no-print">
+    <button id="bundlesBack">&larr; Back</button>
+    <div class="title">Manage bundles</div>
+    <button id="bundleAdd" class="icon-btn" aria-label="Add bundle">&#65291;</button>
+  </div>
+  <div class="sub" id="bundleTotalHint"></div>
+  <div id="bundleList"></div>
+  <div class="btn-col no-print" style="margin-top:16px">
+    <button id="bundlesDone" class="primary">Done</button>
+  </div>
+</section>
+
 <div id="modalOverlay"><div id="modalBox"></div></div>
 <div id="toast"></div>
 
-<script src="js/model.js?v=web-v1.1"></script>
-<script src="js/app.js?v=web-v1.1"></script>
+<script src="js/model.js?v=web-v1.2"></script>
+<script src="js/app.js?v=web-v1.2"></script>
 </body>
 </html>

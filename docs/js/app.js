@@ -21,8 +21,89 @@
   }
   function setEnabled(b, on) { b.disabled = !on; }
 
+  /* ---------------------------------------------------------------- settings
+     Global preferences (localStorage 'jm_settings_v1'). Defaults reproduce the
+     app exactly as-is; everything here is opt-in customization. */
+  var SETTINGS_KEY = 'jm_settings_v1';
+  function defaultSettings() {
+    return {
+      pairsPerBox: 25,
+      flippingEnabled: true,
+      bundles: [
+        { name: 'bundle 1', layers: 6 },
+        { name: 'bundle 2', layers: 6 },
+        { name: 'bundle 3', layers: 6 },
+        { name: 'bundle 4', layers: 6 },
+        { name: 'top pair', layers: 1 }
+      ],
+      quickAdds: [1, 5, 10],
+      darkMode: false
+    };
+  }
+  function loadSettings() {
+    var d = defaultSettings(), s = {};
+    try { s = JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}; } catch (e) { s = {}; }
+    var out = {
+      pairsPerBox: (s.pairsPerBox > 0) ? Math.floor(s.pairsPerBox) : d.pairsPerBox,
+      flippingEnabled: s.flippingEnabled !== false,
+      bundles: d.bundles,
+      quickAdds: d.quickAdds,
+      darkMode: s.darkMode === true
+    };
+    if (Array.isArray(s.bundles) && s.bundles.length) {
+      out.bundles = s.bundles.filter(function (b) {
+        return b && typeof b.name === 'string' && b.layers > 0;
+      }).map(function (b) {
+        return { name: String(b.name).slice(0, 24) || 'bundle', layers: Math.max(1, Math.floor(b.layers)) };
+      });
+      if (!out.bundles.length) out.bundles = d.bundles;
+    } else if (Array.isArray(s.bundles)) {
+      out.bundles = []; // user deleted them all: flipping gets disabled below
+    }
+    if (Array.isArray(s.quickAdds) && s.quickAdds.length) {
+      out.quickAdds = s.quickAdds.filter(function (q) { return q > 0; })
+        .slice(0, 5).map(function (q) { return Math.floor(q); });
+      if (!out.quickAdds.length) out.quickAdds = d.quickAdds;
+    }
+    if (!out.bundles.length) out.flippingEnabled = false;
+    return out;
+  }
+  var settings = loadSettings();
+  function saveSettings() {
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) {}
+    applySettings();
+  }
+  function applySettings() {
+    document.documentElement.setAttribute('data-theme', settings.darkMode ? 'dark' : 'light');
+    var meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', settings.darkMode ? '#121212' : '#3949AB');
+  }
+  function bundleLayersTotal() {
+    return settings.bundles.reduce(function (s, b) { return s + b.layers; }, 0);
+  }
+  /* Which bundle/layer is pair #inBox (0-based) inside its box?
+     Returns {name, layer, layers, isLast, lastLayer} or null when past the end. */
+  function bundleSlot(inBox, bundles) {
+    var acc = 0;
+    for (var i = 0; i < bundles.length; i++) {
+      var L = Math.max(1, bundles[i].layers | 0);
+      if (inBox < acc + L) {
+        var layer = inBox - acc + 1;
+        return { name: bundles[i].name, layer: layer, layers: L,
+                 isLast: i === bundles.length - 1, lastLayer: layer === L };
+      }
+      acc += L;
+    }
+    return null;
+  }
+  // Older saved projects predate per-project box size: they were all 25/box.
+  projects.forEach(function (p) { if (!(p.pairsPerBox > 0)) p.pairsPerBox = 25; });
+  applySettings();
+
   /* ------------------------------------------------------------ navigation */
-  var VIEWS = ['projects', 'entry', 'review', 'locked', 'placing', 'box', 'stapling'];
+  var VIEWS = ['projects', 'entry', 'review', 'locked', 'placing', 'box', 'stapling', 'settings', 'bundles'];
+  // Where Back from Settings should return to ('projects' or 'entry').
+  var settingsReturn = 'projects';
   function show(name) {
     VIEWS.forEach(function (v) { el('view-' + v).classList.toggle('active', v === name); });
     window.scrollTo(0, 0);
@@ -46,15 +127,24 @@
       else m.textContent = o.message;
       box.appendChild(m);
     }
-    var inputEl = null;
-    if (o.input) {
-      inputEl = document.createElement('input');
-      inputEl.type = o.input.numeric ? 'number' : 'text';
+    var inputEls = [];
+    var inputs = o.inputs || (o.input ? [o.input] : []);
+    inputs.forEach(function (inp) {
+      if (inp.label) {
+        var lab = document.createElement('div');
+        lab.className = 'mlabel';
+        lab.textContent = inp.label;
+        box.appendChild(lab);
+      }
+      var inputEl = document.createElement('input');
+      inputEl.type = inp.numeric ? 'number' : 'text';
       inputEl.setAttribute('inputmode', 'numeric');
-      inputEl.value = o.input.value || '';
-      if (o.input.hint != null) inputEl.placeholder = o.input.hint;
+      inputEl.value = inp.value || '';
+      if (inp.hint != null) inputEl.placeholder = inp.hint;
       box.appendChild(inputEl);
-    }
+      inputEls.push(inputEl);
+    });
+    var inputEl = inputEls[0] || null;
     var wrap = document.createElement('div');
     wrap.className = 'mbtns' + (o.rowButtons ? ' row2' : '');
     box.appendChild(wrap);
@@ -65,7 +155,7 @@
       if (b.primary) btn.classList.add('primary');
       if (b.danger) btn.classList.add('danger');
       btn.onclick = function () {
-        var r = b.onClick ? b.onClick({ close: close, input: inputEl }) : undefined;
+        var r = b.onClick ? b.onClick({ close: close, input: inputEl, inputs: inputEls }) : undefined;
         if (r !== false) close();
       };
       wrap.appendChild(btn);
@@ -391,16 +481,17 @@
       return;
     }
     var total = p.entries.reduce(function (s, e) { return s + e.qty; }, 0);
-    if (total % M.BOX_CAPACITY !== 0) {
+    var cap = (p.pairsPerBox > 0) ? p.pairsPerBox : M.BOX_CAPACITY;
+    if (total % cap !== 0) {
       showModal({
         title: "Something's wrong",
-        message: 'The total is ' + total + ' pairs, which isn\'t divisible by 25. ' +
+        message: 'The total is ' + total + ' pairs, which isn\'t divisible by ' + cap + '. ' +
                  'Check your quantities and try again.',
         buttons: [{ label: 'OK', primary: true }]
       });
       return;
     }
-    var boxes = total / M.BOX_CAPACITY;
+    var boxes = total / cap;
     showModal({
       title: 'Confirm box count',
       message: total + ' pairs \u2192 ' + boxes + ' boxes. Is this correct?',
@@ -443,7 +534,8 @@
       rows.appendChild(row);
     });
     var total = p.entries.reduce(function (s, e) { return s + e.qty; }, 0);
-    el('lockedTotal').textContent = total + ' pairs \u2192 ' + (total / M.BOX_CAPACITY) + ' boxes';
+    var cap = (p.pairsPerBox > 0) ? p.pairsPerBox : M.BOX_CAPACITY;
+    el('lockedTotal').textContent = total + ' pairs \u2192 ' + (total / cap) + ' boxes';
 
     // Per-box contents live under the ☰ Boxes menu once placing begins.
   }
@@ -515,19 +607,23 @@
     var inNext = r.boxCounts[r.nextBox];
     var boxNo = r.nextBox + 1;
     var blv = el('bundleLayerView');
-    if (inNext >= M.BOX_CAPACITY - 1) {
-      blv.textContent = 'top pair, box ' + boxNo;
+    if (!settings.flippingEnabled) {
+      blv.textContent = 'layer ' + (inNext + 1) + ', box ' + boxNo;
       el('flipCue').style.display = 'none';
     } else {
-      var b = Math.floor(inNext / M.BUNDLE_SIZE) + 1;
-      var l = inNext % M.BUNDLE_SIZE + 1;
-      blv.textContent = 'bundle ' + b + ', layer ' + l + ', box ' + boxNo;
-      el('flipCue').style.display = l === M.BUNDLE_SIZE ? '' : 'none';
+      var slot = bundleSlot(inNext, settings.bundles);
+      if (!slot) {
+        blv.textContent = 'layer ' + (inNext + 1) + ', box ' + boxNo;
+        el('flipCue').style.display = 'none';
+      } else {
+        blv.textContent = slot.layers === 1
+          ? slot.name + ', box ' + boxNo
+          : slot.name + ', layer ' + slot.layer + ', box ' + boxNo;
+        el('flipCue').style.display = (slot.lastLayer && !slot.isLast) ? '' : 'none';
+      }
     }
 
-    setEnabled(el('add1'), placed < needed);
-    setEnabled(el('add5'), placed < needed);
-    setEnabled(el('add10'), placed < needed);
+    renderQuickAdds(placed < needed);
     setEnabled(el('placeUndo'), placed > 0);
     setEnabled(el('placeLeft'), current > 0);
     setEnabled(el('placeRight'), current < p.entries.length - 1);
@@ -569,7 +665,21 @@
     el('completeTotal').textContent = sumPlaced + ' / ' + sumQty + ' pairs placed';
   }
 
-  /** +1/+5/+10: record N placements into the next N boxes. Caps at remaining. */
+  /** Quick-add: record N placements into the next N boxes. Caps at remaining. */
+  function renderQuickAdds(canPlace) {
+    var row = el('addRow');
+    row.innerHTML = '';
+    var qs = settings.quickAdds.length ? settings.quickAdds : [1, 5, 10];
+    row.style.gridTemplateColumns = 'repeat(' + qs.length + ', 1fr)';
+    qs.forEach(function (q) {
+      var b = document.createElement('button');
+      b.textContent = '+' + q;
+      b.onclick = function () { onAdd(q); };
+      setEnabled(b, canPlace);
+      row.appendChild(b);
+    });
+  }
+
   function onAdd(n) {
     var p = activeProject();
     var r = M.replay(p);
@@ -577,8 +687,9 @@
     if (remaining <= 0) return;
     var actual = Math.min(n, remaining);
     var now = Date.now();
+    var lastBox = (r.nextBox + actual - 1) % M.boxes(p) + 1;
     p.placingEvents.push({ size: current, count: actual, t: now });
-    p.timeline.push({ size: current, t: now, text: '+' + actual });
+    p.timeline.push({ size: current, t: now, text: '+' + actual + ' \u2014 Box ' + lastBox });
     persist();
     renderPlacing();
   }
@@ -855,12 +966,21 @@
       var tr = document.createElement('tr');
       if (pos % 2 === 1) tr.className = 'alt';
       var bundle, layer;
-      if (pos < M.BOX_CAPACITY - 1) {
-        bundle = String(Math.floor(pos / M.BUNDLE_SIZE) + 1);
-        layer = String(pos % M.BUNDLE_SIZE + 1);
-      } else {
+      if (!settings.flippingEnabled) {
         bundle = '\u2013';
-        layer = 'top';
+        layer = String(pos + 1);
+      } else {
+        var bslot = bundleSlot(pos, settings.bundles);
+        if (!bslot) {
+          bundle = '\u2013';
+          layer = String(pos + 1);
+        } else if (bslot.layers === 1 && bslot.isLast) {
+          bundle = '\u2013';
+          layer = 'top';
+        } else {
+          bundle = bslot.name;
+          layer = String(bslot.layer);
+        }
       }
       [String(pos + 1), M.displaySize(e.waist, e.length), bundle, layer].forEach(function (v) {
         var td = document.createElement('td');
@@ -924,6 +1044,159 @@
     } else {
       recordStaple(n);
     }
+  }
+
+  /* ---------------------------------------------------------------- settings */
+  function showSettings() { renderSettings(); show('settings'); }
+
+  function renderSettings() {
+    el('setPairs').value = settings.pairsPerBox;
+    var ft = el('setFlipToggle');
+    ft.textContent = settings.flippingEnabled ? 'On' : 'Off';
+    ft.classList.toggle('on', settings.flippingEnabled);
+    el('manageBundlesWrap').style.display = settings.flippingEnabled ? '' : 'none';
+    el('qCount').textContent = settings.quickAdds.length;
+    renderQuickAddInputs();
+    var dt = el('setDarkToggle');
+    dt.textContent = settings.darkMode ? 'On' : 'Off';
+    dt.classList.toggle('on', settings.darkMode);
+  }
+
+  function renderQuickAddInputs() {
+    var wrap = el('quickAddInputs');
+    wrap.innerHTML = '';
+    settings.quickAdds.forEach(function (q, i) {
+      var row = document.createElement('div');
+      row.className = 'set-row';
+      var lab = document.createElement('div');
+      lab.className = 'sub';
+      lab.textContent = 'Button ' + (i + 1);
+      var inp = document.createElement('input');
+      inp.className = 'num-input-sm';
+      inp.type = 'number';
+      inp.min = '1';
+      inp.setAttribute('inputmode', 'numeric');
+      inp.value = q;
+      inp.addEventListener('change', function () {
+        var v = Math.max(1, parseInt(inp.value, 10) || q);
+        settings.quickAdds[i] = v;
+        inp.value = v;
+        saveSettings();
+      });
+      row.appendChild(lab);
+      row.appendChild(inp);
+      wrap.appendChild(row);
+    });
+  }
+
+  function bumpQuickAdds(d) {
+    var q = settings.quickAdds.slice();
+    if (d < 0 && q.length > 1) q.pop();
+    else if (d > 0 && q.length < 5) q.push((q[q.length - 1] || 0) + 5);
+    settings.quickAdds = q;
+    saveSettings();
+    renderSettings();
+  }
+
+  /* ----------------------------------------------------------------- bundles */
+  function showBundles() { renderBundles(); show('bundles'); }
+
+  function renderBundles() {
+    var list = el('bundleList');
+    list.innerHTML = '';
+    settings.bundles.forEach(function (b, i) {
+      var btn = document.createElement('button');
+      btn.className = 'bundle-row';
+      var meta = document.createElement('div');
+      meta.className = 'meta';
+      var nm = document.createElement('div');
+      nm.className = 'name';
+      nm.textContent = b.name;
+      var sb = document.createElement('div');
+      sb.className = 'sub2';
+      sb.textContent = b.layers + (b.layers === 1 ? ' layer' : ' layers');
+      meta.appendChild(nm);
+      meta.appendChild(sb);
+      var chev = document.createElement('div');
+      chev.className = 'chev';
+      chev.textContent = '\u203a';
+      btn.appendChild(meta);
+      btn.appendChild(chev);
+      btn.onclick = function () { openBundleEditor(i); };
+      list.appendChild(btn);
+    });
+    if (!settings.bundles.length) {
+      var em = document.createElement('div');
+      em.className = 'empty';
+      em.textContent = 'No bundles \u2014 add one with \uff0b, or go back and flipping will be turned off.';
+      list.appendChild(em);
+    }
+    var total = bundleLayersTotal();
+    el('bundleTotalHint').textContent =
+      total + ' layers total \u00b7 each box holds ' + settings.pairsPerBox +
+      (total === settings.pairsPerBox ? ' \u2713' : ' \u2014 doesn\'t match');
+  }
+
+  function openBundleEditor(i) {
+    var b = settings.bundles[i];
+    if (!b) return;
+    showModal({
+      title: 'Edit bundle',
+      inputs: [
+        { label: 'Name', value: b.name },
+        { label: 'Layers per bundle', numeric: true, value: String(b.layers) }
+      ],
+      buttons: [
+        {
+          label: 'Save', primary: true, onClick: function (o) {
+            b.name = (o.inputs[0].value.trim() || b.name).slice(0, 24);
+            b.layers = Math.max(1, parseInt(o.inputs[1].value, 10) || b.layers);
+            saveSettings();
+            renderBundles();
+          }
+        },
+        {
+          label: 'Delete', danger: true, onClick: function () {
+            settings.bundles.splice(i, 1);
+            saveSettings();
+            renderBundles();
+          }
+        },
+        { label: 'Cancel' }
+      ]
+    });
+  }
+
+  function onBundlesDone() {
+    if (!settings.bundles.length) {
+      // Deleting them all just means no bundles: turn flipping off.
+      settings.flippingEnabled = false;
+      saveSettings();
+      toast('Bundles turned off');
+      showSettings();
+      return;
+    }
+    var total = bundleLayersTotal();
+    if (total !== settings.pairsPerBox) {
+      showModal({
+        title: 'Layers don\'t match',
+        message: 'Your bundles add up to ' + total + ' layers, but each box holds ' +
+                 settings.pairsPerBox + ' pairs.',
+        rowButtons: true,
+        buttons: [
+          {
+            label: 'Use ' + total + ' per box', primary: true, onClick: function () {
+              settings.pairsPerBox = total;
+              saveSettings();
+              showSettings();
+            }
+          },
+          { label: 'Keep ' + settings.pairsPerBox, onClick: function () { showSettings(); } }
+        ]
+      });
+      return;
+    }
+    showSettings();
   }
 
   /* ------------------------------------------------------------------- wiring */
@@ -1005,13 +1278,16 @@
     el('newProjectBtn').onclick = function () {
       var name = M.Store.uniqueName(projects, M.projectDisplayName(new Date()));
       var p = M.Store.blankProject(name);
+      p.pairsPerBox = settings.pairsPerBox;
       projects.push(p);
       ui.activeId = p.id;
       persist();
       showEntry();
     };
+    el('projectsSettings').onclick = function () { settingsReturn = 'projects'; showSettings(); };
     // entry
     el('entryBack').onclick = function () { saveDraft(); showProjects(); };
+    el('entrySettings').onclick = function () { saveDraft(); settingsReturn = 'entry'; showSettings(); };
     el('entryDone').onclick = onEntryDone;
     el('entryLeft').onclick = onEntryPrev;
     el('entryRight').onclick = onEntryNext;
@@ -1035,9 +1311,6 @@
     el('placingBack').onclick = function () { showLocked(); };
     el('sizeBig').onclick = onSizeJump;
     el('placedView').onclick = onPlacedTap;
-    el('add1').onclick = function () { onAdd(1); };
-    el('add5').onclick = function () { onAdd(5); };
-    el('add10').onclick = function () { onAdd(10); };
     el('placeUndo').onclick = onUndo;
     el('placeLeft').onclick = function () { onArrow(-1); };
     el('placeRight').onclick = function () { onArrow(1); };
@@ -1053,6 +1326,56 @@
     el('stapleBack').onclick = function () { showPlacing(); };
     el('stapleDone').onclick = onStapleDone;
     el('stapleCancel').onclick = function () { showPlacing(); };
+    // settings
+    el('settingsBack').onclick = function () {
+      if (settingsReturn === 'entry') showEntry(); else showProjects();
+    };
+    el('setPairs').addEventListener('change', function () {
+      var v = Math.max(1, parseInt(el('setPairs').value, 10) || settings.pairsPerBox);
+      settings.pairsPerBox = v;
+      el('setPairs').value = v;
+      saveSettings();
+    });
+    el('setFlipToggle').onclick = function () {
+      settings.flippingEnabled = !settings.flippingEnabled;
+      saveSettings();
+      renderSettings();
+    };
+    el('manageBundlesBtn').onclick = function () { showBundles(); };
+    el('qDown').onclick = function () { bumpQuickAdds(-1); };
+    el('qUp').onclick = function () { bumpQuickAdds(1); };
+    el('setDarkToggle').onclick = function () {
+      settings.darkMode = !settings.darkMode;
+      saveSettings();
+      renderSettings();
+    };
+    el('resetDefaultsBtn').onclick = function () {
+      showModal({
+        title: 'Reset to defaults?',
+        message: 'Restores pairs per box (25), bundles, quick-add buttons and dark mode to the original settings.',
+        rowButtons: true,
+        buttons: [
+          {
+            label: 'Reset', danger: true, onClick: function () {
+              settings = defaultSettings();
+              saveSettings();
+              renderSettings();
+              toast('Settings reset');
+            }
+          },
+          { label: 'Cancel' }
+        ]
+      });
+    };
+    // bundles
+    el('bundleAdd').onclick = function () {
+      var n = settings.bundles.length + 1;
+      settings.bundles.push({ name: 'bundle ' + n, layers: 6 });
+      saveSettings();
+      renderBundles();
+    };
+    el('bundlesBack').onclick = onBundlesDone;
+    el('bundlesDone').onclick = onBundlesDone;
   }
 
   document.addEventListener('DOMContentLoaded', function () {

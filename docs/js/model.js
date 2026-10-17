@@ -20,10 +20,12 @@
     return e.waist + ' x ' + (e.length === '00' ? 'ODD' : e.length);
   }
 
-  /** Boxes implied by the current plan; -1 if the total isn't divisible by 25. */
+  /** Boxes implied by the current plan; -1 if the total isn't divisible by the
+      project's pairs-per-box (defaults to 25). */
   function boxCount(p) {
+    var cap = (p.pairsPerBox > 0) ? p.pairsPerBox : BOX_CAPACITY;
     var total = p.entries.reduce(function (s, e) { return s + e.qty; }, 0);
-    return total % BOX_CAPACITY === 0 ? total / BOX_CAPACITY : -1;
+    return total % cap === 0 ? total / cap : -1;
   }
 
   /**
