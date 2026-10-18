@@ -245,6 +245,17 @@ button:disabled { opacity: 0.35; }
   min-height: 2.889rem; border: 0.111rem solid var(--border); border-radius: 0.444rem;
   background: var(--card); color: var(--ink);
 }
+/* straight-mix size rows: [size text][qty number][x] */
+.mix-row { display: flex; gap: 0.5rem; margin-bottom: 0.5rem; align-items: center; }
+.mix-row input {
+  font-size: 1.25rem; min-height: 2.889rem;
+  border: 0.111rem solid var(--border); border-radius: 0.444rem;
+  background: var(--card); color: var(--ink); padding: 0.333rem 0.667rem;
+}
+.mix-row input.mix-size { flex: 3; min-width: 0; }
+.mix-row input.mix-qty { flex: 2; min-width: 0; text-align: center; }
+.mix-empty { color: var(--muted); text-align: center; padding: 1.5rem 0; }
+.mix-big { font-size: 1.6rem; font-weight: bold; margin: 0.5rem 0; }
 .stepper { display: flex; align-items: center; gap: 0.556rem; }
 .stepper button { min-height: 2.667rem; min-width: 3rem; font-size: 1.3rem; }
 .stepper span { font-size: 1.2rem; font-weight: bold; min-width: 1.667rem; text-align: center; }

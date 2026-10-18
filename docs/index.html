@@ -9,7 +9,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <title>Jeans Mixing</title>
 <!-- ?v= cache-buster: bump every release so phones fetch fresh files -->
-<link rel="stylesheet" href="css/style.css?v=web-v1.2.3">
+<link rel="stylesheet" href="css/style.css?v=web-v1.2.4">
 </head>
 <body>
 
@@ -199,6 +199,13 @@
       <button id="scaleUp" aria-label="bigger">+</button>
     </div>
   </div>
+  <div class="set-row">
+    <div>
+      <div class="set-label">Experimental features</div>
+      <div class="sub">Try in-progress features like Straight Mix</div>
+    </div>
+    <button id="setExperimentalToggle" class="toggle">Off</button>
+  </div>
   <div class="btn-col no-print" id="resetWrap" style="margin-top:1.111rem">
     <button id="resetDefaultsBtn" class="danger">Reset to defaults</button>
   </div>
@@ -218,10 +225,58 @@
   </div>
 </section>
 
+<section id="view-mixsizes" class="view">
+  <div class="topbar no-print">
+    <button id="mixSizesBack">&larr; Back</button>
+    <div class="title" id="mixSizesTitle">Sizes</div>
+    <button id="mixSizesAdd" class="icon-btn" aria-label="Add size">&#65291;</button>
+  </div>
+  <div class="sub" id="mixTotalLine" style="margin-bottom:0.5rem"></div>
+  <div id="mixSizeList"></div>
+  <div class="btn-col no-print" style="margin-top:0.889rem">
+    <button id="mixSizesDone" class="primary">Done</button>
+  </div>
+</section>
+
+<section id="view-mixcapacity" class="view">
+  <div class="topbar no-print">
+    <button id="mixCapBack">&larr; Back</button>
+    <div class="title">Box capacity</div>
+  </div>
+  <div class="sub" id="mixCapTotal" style="margin-bottom:0.75rem"></div>
+  <div class="set-row">
+    <div class="set-label" id="mixCapLabel">Per box</div>
+    <input id="mixCapInput" class="num-input-sm" type="number" inputmode="numeric" min="1">
+  </div>
+  <div class="btn-col no-print" style="margin-top:0.889rem">
+    <button id="mixCapDone" class="primary">Done</button>
+  </div>
+</section>
+
+<section id="view-mixboxes" class="view">
+  <div class="topbar no-print">
+    <button id="mixBoxesBack">&larr; Back</button>
+    <div class="title">Boxes needed</div>
+  </div>
+  <div id="mixBoxesMath" style="margin:0.5rem 0 1rem"></div>
+  <div class="btn-col no-print">
+    <button id="mixBoxesSave" class="primary">Save project</button>
+  </div>
+</section>
+
+<section id="view-mixlocked" class="view">
+  <div class="topbar no-print">
+    <button id="mixLockedBack">&larr; Projects</button>
+    <div class="title" id="mixLockedTitle"></div>
+  </div>
+  <div id="mixLockedSummary"></div>
+  <div class="sub" style="margin-top:0.75rem">The placing guide for straight mix is coming in the next update.</div>
+</section>
+
 <div id="modalOverlay"><div id="modalBox"></div></div>
 <div id="toast"></div>
 
-<script src="js/model.js?v=web-v1.2.3"></script>
-<script src="js/app.js?v=web-v1.2.3"></script>
+<script src="js/model.js?v=web-v1.2.4"></script>
+<script src="js/app.js?v=web-v1.2.4"></script>
 </body>
 </html>

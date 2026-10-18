@@ -8,7 +8,7 @@
   var M = window.JM;
   // Single source of truth for the displayed version (Projects title).
   // Bump this with every release, alongside the ?v= cache-busters.
-  var APP_VERSION = '1.2.3';
+  var APP_VERSION = '1.2.4';
 
   function el(id) { return document.getElementById(id); }
 
@@ -41,7 +41,8 @@
       ],
       quickAdds: [1, 5, 10],
       darkMode: false,
-      uiScale: 1
+      uiScale: 1,
+      experimental: false
     };
   }
   function loadSettings() {
@@ -53,7 +54,8 @@
       bundles: d.bundles,
       quickAdds: d.quickAdds,
       darkMode: s.darkMode === true,
-      uiScale: (s.uiScale > 0) ? Math.min(2, Math.max(0.5, s.uiScale)) : d.uiScale
+      uiScale: (s.uiScale > 0) ? Math.min(2, Math.max(0.5, s.uiScale)) : d.uiScale,
+      experimental: s.experimental === true
     };
     if (Array.isArray(s.bundles) && s.bundles.length) {
       out.bundles = s.bundles.filter(function (b) {
@@ -128,16 +130,19 @@
     return null;
   }
   // Older saved projects predate per-project settings: they were all 25/box,
-  // flipping on, with the default bundles.
+  // flipping on, with the default bundles — and every old project is a regular pull.
   projects.forEach(function (p) {
+    if (p.mode !== 'straight') p.mode = 'regular';
     if (!(p.pairsPerBox > 0)) p.pairsPerBox = 25;
     if (!Array.isArray(p.bundles)) p.bundles = cloneBundles(defaultSettings().bundles);
     if (typeof p.flippingEnabled !== 'boolean') p.flippingEnabled = settings.flippingEnabled;
+    if (p.mode === 'straight' && !Array.isArray(p.mixEntries)) p.mixEntries = [];
   });
   applySettings();
 
   /* ------------------------------------------------------------ navigation */
-  var VIEWS = ['projects', 'entry', 'review', 'locked', 'placing', 'box', 'stapling', 'settings', 'bundles'];
+  var VIEWS = ['projects', 'entry', 'review', 'locked', 'placing', 'box', 'stapling', 'settings', 'bundles',
+    'mixsizes', 'mixcapacity', 'mixboxes', 'mixlocked'];
   // Where Back from Settings should return to ('projects' or 'entry').
   var settingsReturn = 'projects';
   function show(name) {
@@ -174,7 +179,7 @@
       }
       var inputEl = document.createElement('input');
       inputEl.type = inp.numeric ? 'number' : 'text';
-      inputEl.setAttribute('inputmode', 'numeric');
+      if (inp.numeric) inputEl.setAttribute('inputmode', 'numeric');
       inputEl.value = inp.value || '';
       if (inp.hint != null) inputEl.placeholder = inp.hint;
       box.appendChild(inputEl);
@@ -211,6 +216,14 @@
 
   /* --------------------------------------------------------------- projects */
   function projectSubtitle(p) {
+    if (p.mode === 'straight') {
+      var mt = (p.mixEntries || []).reduce(function (s, e) { return s + (e.qty || 0); }, 0);
+      var sub = 'straight mix \u2022 ' + (p.itemName || 'items');
+      if ((p.mixEntries || []).length) sub += ' \u2022 ' + mt + ' counted';
+      if (p.mixBoxes > 0) sub += ' \u2022 ' + p.mixBoxes + ' boxes';
+      if (p.locked) sub += ' \u2022 locked';
+      return sub;
+    }
     var total = p.entries.reduce(function (s, e) { return s + e.qty; }, 0);
     var sub = p.entries.length + ' sizes \u2022 ' + total + ' pairs';
     if (p.locked) sub += ' \u2022 locked';
@@ -270,7 +283,10 @@
   function openProject(p) {
     ui.activeId = p.id;
     M.Store.saveUI(ui);
-    if (p.locked) showLocked();
+    if (p.mode === 'straight') {
+      if (p.locked) showMixLocked();
+      else showMixSizes();
+    } else if (p.locked) showLocked();
     else showEntry();
   }
 
@@ -1120,6 +1136,9 @@
     dt.textContent = settings.darkMode ? 'On' : 'Off';
     dt.classList.toggle('on', settings.darkMode);
     el('scaleVal').textContent = Math.round(settings.uiScale * 100) + '%';
+    var xt = el('setExperimentalToggle');
+    xt.textContent = settings.experimental ? 'On' : 'Off';
+    xt.classList.toggle('on', settings.experimental);
     el('resetWrap').style.display = locked ? 'none' : '';
   }
 
@@ -1270,6 +1289,123 @@
     showSettings();
   }
 
+  /* ------------------------------------------------------- straight mix */
+  // Box math: ceil(total/capacity), plus one safety box when the fractional
+  // part goes over .5 (undercount buffer).
+  function straightBoxMath(total, capacity) {
+    var exact = total / capacity;
+    var frac = exact - Math.floor(exact);
+    var safety = frac > 0.5;
+    var boxes = Math.ceil(exact) + (safety ? 1 : 0);
+    return { total: total, capacity: capacity, exact: exact, boxes: boxes, safety: safety };
+  }
+  function mixTotal(p) {
+    return (p.mixEntries || []).reduce(function (s, e) { return s + (e.qty || 0); }, 0);
+  }
+
+  function showMixSizes() {
+    var p = activeProject();
+    if (!p || p.mode !== 'straight') return showProjects();
+    renderMixSizes();
+    show('mixsizes');
+  }
+  function renderMixSizes() {
+    var p = activeProject();
+    if (!p) return showProjects();
+    el('mixSizesTitle').textContent = p.itemName ? ('Sizes \u2014 ' + p.itemName) : 'Sizes';
+    var list = el('mixSizeList');
+    list.innerHTML = '';
+    (p.mixEntries || []).forEach(function (e, i) {
+      var row = document.createElement('div');
+      row.className = 'mix-row';
+      var sizeIn = document.createElement('input');
+      sizeIn.type = 'text';
+      sizeIn.className = 'mix-size';
+      sizeIn.placeholder = 'Size';
+      sizeIn.setAttribute('aria-label', 'Size');
+      sizeIn.value = e.size || '';
+      sizeIn.addEventListener('input', function () {
+        e.size = sizeIn.value;
+        persist();
+      });
+      var qtyIn = document.createElement('input');
+      qtyIn.type = 'number';
+      qtyIn.className = 'mix-qty';
+      qtyIn.placeholder = 'Qty';
+      qtyIn.setAttribute('aria-label', 'Quantity');
+      qtyIn.setAttribute('inputmode', 'numeric');
+      qtyIn.min = '1';
+      qtyIn.value = e.qty || '';
+      qtyIn.addEventListener('input', function () {
+        e.qty = Math.max(0, parseInt(qtyIn.value, 10) || 0);
+        persist();
+        updateMixTotal();
+      });
+      var del = document.createElement('button');
+      del.className = 'icon-btn danger';
+      del.setAttribute('aria-label', 'Delete size');
+      del.textContent = '\u00d7';
+      del.onclick = function () {
+        p.mixEntries.splice(i, 1);
+        persist();
+        renderMixSizes();
+      };
+      row.appendChild(sizeIn);
+      row.appendChild(qtyIn);
+      row.appendChild(del);
+      list.appendChild(row);
+    });
+    if (!(p.mixEntries || []).length) {
+      var em = document.createElement('div');
+      em.className = 'mix-empty';
+      em.textContent = 'Tap \uff0b to add the sizes you counted.';
+      list.appendChild(em);
+    }
+    updateMixTotal();
+  }
+  function updateMixTotal() {
+    var p = activeProject();
+    if (!p) return;
+    el('mixTotalLine').textContent = mixTotal(p) + ' ' + (p.itemName || 'items') + ' counted';
+  }
+
+  function showMixCapacity() {
+    var p = activeProject();
+    if (!p || p.mode !== 'straight') return showProjects();
+    el('mixCapTotal').textContent = mixTotal(p) + ' ' + (p.itemName || 'items') + ' counted';
+    el('mixCapLabel').textContent = 'How many ' + (p.itemName || 'items') + ' fit in each box?';
+    el('mixCapInput').value = p.boxCapacity > 0 ? p.boxCapacity : '';
+    show('mixcapacity');
+  }
+
+  function showMixBoxes() {
+    var p = activeProject();
+    if (!p || p.mode !== 'straight' || !(p.boxCapacity > 0)) return showProjects();
+    var m = straightBoxMath(mixTotal(p), p.boxCapacity);
+    p.mixBoxes = m.boxes;
+    persist();
+    var html = m.total + ' ' + (p.itemName || 'items') + ' \u00f7 ' + m.capacity +
+      ' per box = ' + m.exact.toFixed(2);
+    if (m.safety) html += '<div class="sub">Over .5, so one safety box is included.</div>';
+    html += '<div class="mix-big">Make ' + m.boxes + ' box' + (m.boxes === 1 ? '' : 'es') + '</div>';
+    el('mixBoxesMath').innerHTML = html;
+    show('mixboxes');
+  }
+
+  function showMixLocked() {
+    var p = activeProject();
+    if (!p || p.mode !== 'straight') return showProjects();
+    el('mixLockedTitle').textContent = p.name;
+    var rows = (p.mixEntries || []).map(function (e) {
+      return e.size + ': ' + e.qty;
+    }).join(' \u2022 ');
+    el('mixLockedSummary').innerHTML =
+      '<div><b>' + mixTotal(p) + '</b> ' + (p.itemName || 'items') + ' in <b>' +
+      p.mixBoxes + '</b> boxes (' + p.boxCapacity + ' per box)</div>' +
+      (rows ? '<div class="sub" style="margin-top:0.25rem">' + rows + '</div>' : '');
+    show('mixlocked');
+  }
+
   /* ------------------------------------------------------------------- wiring */
 
   /* Multi-touch pad: presses commit in touch-START order, no matter the lift
@@ -1346,9 +1482,10 @@
       }
     });
     // projects
-    el('newProjectBtn').onclick = function () {
+    function createRegularProject() {
       var name = M.Store.uniqueName(projects, M.projectDisplayName(new Date()));
       var p = M.Store.blankProject(name);
+      p.mode = 'regular';
       p.pairsPerBox = settings.pairsPerBox;
       p.flippingEnabled = settings.flippingEnabled;
       p.bundles = cloneBundles(settings.bundles);
@@ -1356,6 +1493,48 @@
       ui.activeId = p.id;
       persist();
       showEntry();
+    }
+    function createStraightProject(itemName) {
+      var name = M.Store.uniqueName(projects, M.projectDisplayName(new Date()));
+      var p = M.Store.blankProject(name);
+      p.mode = 'straight';
+      p.itemName = itemName;
+      p.mixEntries = []; // [{size, qty}] — the counted sizes
+      p.boxCapacity = 0;
+      p.mixBoxes = 0;
+      projects.push(p);
+      ui.activeId = p.id;
+      persist();
+      showMixSizes();
+    }
+    function askMixItem() {
+      showModal({
+        title: 'What item are you mixing?',
+        inputs: [{ label: 'Item', hint: 'shirts, hoodies, jackets\u2026' }],
+        buttons: [
+          {
+            label: 'Done', primary: true, onClick: function (o) {
+              var name = (o.input.value || '').trim().slice(0, 24);
+              if (!name) { toast('Name the item first'); return false; }
+              createStraightProject(name);
+            }
+          },
+          { label: 'Cancel' }
+        ]
+      });
+    }
+    el('newProjectBtn').onclick = function () {
+      if (!settings.experimental) { createRegularProject(); return; }
+      showModal({
+        title: 'New project',
+        rowButtons: true,
+        buttons: [
+          { label: 'Regular pull', primary: true, onClick: function () { createRegularProject(); } },
+          // return false: askMixItem opens its own modal in the same overlay,
+          // so the first modal must not auto-close (which would kill the second).
+          { label: 'Straight mix', onClick: function () { askMixItem(); return false; } }
+        ]
+      });
     };
     el('projectsSettings').onclick = function () { settingsReturn = 'projects'; showSettings('defaults'); };
     // entry
@@ -1440,6 +1619,12 @@
     };
     el('scaleDown').onclick = function () { bumpScale(-0.05); };
     el('scaleUp').onclick = function () { bumpScale(0.05); };
+    el('setExperimentalToggle').onclick = function () {
+      settings.experimental = !settings.experimental;
+      saveSettings();
+      renderSettings();
+      toast(settings.experimental ? 'Experimental features on' : 'Experimental features off');
+    };
     el('resetDefaultsBtn').onclick = function () {
       var isProj = settingsCtx.mode === 'project' && !!settingsCtx.project;
       showModal({
@@ -1479,6 +1664,51 @@
     };
     el('bundlesBack').onclick = onBundlesDone;
     el('bundlesDone').onclick = onBundlesDone;
+    // straight mix
+    el('mixSizesBack').onclick = function () { showProjects(); };
+    el('mixSizesAdd').onclick = function () {
+      var p = activeProject();
+      if (!p) return;
+      p.mixEntries.push({ size: '', qty: 0 });
+      persist();
+      renderMixSizes();
+    };
+    el('mixSizesDone').onclick = function () {
+      var p = activeProject();
+      if (!p) return showProjects();
+      var rows = p.mixEntries || [];
+      var partial = rows.some(function (e) {
+        var hasSize = (e.size || '').trim().length > 0, hasQty = (e.qty || 0) > 0;
+        return hasSize !== hasQty;
+      });
+      if (partial) { toast('Every row needs a size and a quantity'); return; }
+      p.mixEntries = rows.filter(function (e) {
+        return (e.size || '').trim().length > 0 && (e.qty || 0) > 0;
+      });
+      if (!p.mixEntries.length) { toast('Add at least one size'); return; }
+      persist();
+      showMixCapacity();
+    };
+    el('mixCapBack').onclick = function () { showMixSizes(); };
+    el('mixCapDone').onclick = function () {
+      var p = activeProject();
+      if (!p) return showProjects();
+      var v = Math.max(0, parseInt(el('mixCapInput').value, 10) || 0);
+      if (!(v > 0)) { toast('Enter how many fit in each box'); return; }
+      p.boxCapacity = v;
+      persist();
+      showMixBoxes();
+    };
+    el('mixBoxesBack').onclick = function () { showMixCapacity(); };
+    el('mixBoxesSave').onclick = function () {
+      var p = activeProject();
+      if (!p) return showProjects();
+      p.locked = true;
+      persist();
+      toast('Project saved');
+      showProjects();
+    };
+    el('mixLockedBack').onclick = function () { showProjects(); };
   }
 
   document.addEventListener('DOMContentLoaded', function () {
