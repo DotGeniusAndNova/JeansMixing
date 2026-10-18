@@ -1325,7 +1325,17 @@
       sizeIn.setAttribute('aria-label', 'Size');
       sizeIn.value = e.size || '';
       sizeIn.addEventListener('input', function () {
-        e.size = sizeIn.value;
+        // sizes are always caps: s -> S
+        var v = sizeIn.value.toUpperCase();
+        if (v !== sizeIn.value) sizeIn.value = v;
+        e.size = v;
+        persist();
+      });
+      // tapping a box clears it for fast re-entry
+      sizeIn.addEventListener('focus', function () {
+        if (!sizeIn.value) return;
+        sizeIn.value = '';
+        e.size = '';
         persist();
       });
       var qtyIn = document.createElement('input');
@@ -1338,6 +1348,13 @@
       qtyIn.value = e.qty || '';
       qtyIn.addEventListener('input', function () {
         e.qty = Math.max(0, parseInt(qtyIn.value, 10) || 0);
+        persist();
+        updateMixTotal();
+      });
+      qtyIn.addEventListener('focus', function () {
+        if (!qtyIn.value) return;
+        qtyIn.value = '';
+        e.qty = 0;
         persist();
         updateMixTotal();
       });
