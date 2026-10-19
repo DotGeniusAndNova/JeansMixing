@@ -155,6 +155,7 @@
   function showModal(o) {
     var ov = el('modalOverlay'), box = el('modalBox');
     box.innerHTML = '';
+    box.scrollTop = 0;
     function close() { ov.classList.remove('open'); box.innerHTML = ''; }
     if (o.title) {
       var h = document.createElement('h3');
@@ -1637,10 +1638,45 @@
     paint(false);
 
     var startY = 0, startT = 0, dragging = false, pid = null;
+    var moveHist = [], momentumId = null;
+    function stopMomentum() {
+      if (momentumId != null) {
+        if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(momentumId);
+        momentumId = null;
+      }
+    }
+    function snapTo(t) {
+      idx = Math.round((ITEM_H - t) / ITEM_H);
+      idx = Math.max(0, Math.min(values.length - 1, idx));
+      current = values[idx];
+      paint(true);
+    }
+    function spin(t0, v0) {
+      // flick inertia: decelerate, stop at the ends, then snap
+      if (typeof requestAnimationFrame !== 'function') { snapTo(t0); return; }
+      var t = t0, v = v0; // v in px per 60fps frame
+      var lo = yFor(values.length - 1), hi = yFor(0);
+      var last = Date.now();
+      function frame() {
+        var dt = Math.min(50, Date.now() - last) / 16.7;
+        last = Date.now();
+        v *= Math.pow(0.95, dt);
+        t += v * dt;
+        if (t <= lo) { t = lo; v = 0; }
+        if (t >= hi) { t = hi; v = 0; }
+        strip.style.transition = 'none';
+        strip.style.transform = 'translateY(' + t + 'px)';
+        if (Math.abs(v) < 0.6) { momentumId = null; snapTo(t); }
+        else momentumId = requestAnimationFrame(frame);
+      }
+      momentumId = requestAnimationFrame(frame);
+    }
     viewport.style.touchAction = 'none';
     viewport.addEventListener('pointerdown', function (e) {
+      stopMomentum();
       dragging = true; pid = e.pointerId;
       startY = e.clientY; startT = yFor(idx);
+      moveHist = [{ t: Date.now(), y: e.clientY }];
       strip.style.transition = 'none';
       if (viewport.setPointerCapture) try { viewport.setPointerCapture(pid); } catch (err) {}
       e.preventDefault();
@@ -1652,16 +1688,23 @@
       if (t < lo) t = lo + (t - lo) * 0.25; // rubber-band past the ends
       if (t > hi) t = hi + (t - hi) * 0.25;
       strip.style.transform = 'translateY(' + t + 'px)';
+      var now = Date.now();
+      moveHist.push({ t: now, y: e.clientY });
+      while (moveHist.length > 2 && now - moveHist[0].t > 120) moveHist.shift();
       e.preventDefault();
     });
     function release(e) {
       if (!dragging || (e.pointerId !== undefined && e.pointerId !== pid)) return;
       dragging = false;
       var t = startT + (e.clientY - startY);
-      idx = Math.round((ITEM_H - t) / ITEM_H);
-      idx = Math.max(0, Math.min(values.length - 1, idx));
-      current = values[idx];
-      paint(true);
+      var v = 0; // px per ms, from the last ~120ms of the drag
+      if (moveHist.length >= 2) {
+        var a = moveHist[0], b = moveHist[moveHist.length - 1], dt = b.t - a.t;
+        if (dt > 0) v = (b.y - a.y) / dt;
+      }
+      moveHist = [];
+      if (Math.abs(v) > 0.35) spin(t, v * 16.7);
+      else snapTo(t);
     }
     viewport.addEventListener('pointerup', release);
     viewport.addEventListener('pointercancel', release);

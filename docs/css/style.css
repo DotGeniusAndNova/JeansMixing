@@ -209,6 +209,11 @@ button:disabled { opacity: 0.35; }
   background: #fff; border-radius: 0.778rem; padding: 1rem;
   width: 100%; max-width: 26.667rem; max-height: 85vh; overflow-y: auto;
   overscroll-behavior: contain;
+  /* margin:auto centers when short but top-aligns (scrollable) when tall —
+     without this, a centered flex child taller than the screen has its top
+     cut off and unreachable */
+  margin: auto;
+  touch-action: pan-y;
 }
 #modalBox h3 { margin: 0 0 0.556rem; font-size: 1.2rem; }
 #modalBox .msg { margin: 0 0 0.667rem; line-height: 1.45; }
