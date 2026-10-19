@@ -37,6 +37,21 @@ self.addEventListener('activate', function (e) {
 
 self.addEventListener('fetch', function (e) {
   if (e.request.method !== 'GET') return;
+  // The page itself: network first so updates apply immediately when online,
+  // cached copy when offline.
+  if (e.request.mode === 'navigate') {
+    e.respondWith(
+      fetch(e.request).then(function (res) {
+        var copy = res.clone();
+        caches.open(CACHE).then(function (c) { c.put('./index.html', copy); });
+        return res;
+      }).catch(function () {
+        return caches.match('./index.html');
+      })
+    );
+    return;
+  }
+  // Versioned assets (?v= changes every release): cache first.
   e.respondWith(
     caches.match(e.request).then(function (hit) {
       if (hit) return hit;
@@ -44,9 +59,6 @@ self.addEventListener('fetch', function (e) {
         var copy = res.clone();
         caches.open(CACHE).then(function (c) { c.put(e.request, copy); });
         return res;
-      }).catch(function () {
-        if (e.request.mode === 'navigate') return caches.match('./index.html');
-        throw new Error('offline');
       });
     })
   );
