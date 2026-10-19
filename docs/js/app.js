@@ -8,7 +8,7 @@
   var M = window.JM;
   // Single source of truth for the displayed version (Projects title).
   // Bump this with every release, alongside the ?v= cache-busters.
-  var APP_VERSION = '1.2.4';
+  var APP_VERSION = '1.2.5';
 
   function el(id) { return document.getElementById(id); }
 
@@ -142,7 +142,7 @@
 
   /* ------------------------------------------------------------ navigation */
   var VIEWS = ['projects', 'entry', 'review', 'locked', 'placing', 'box', 'stapling', 'settings', 'bundles',
-    'mixsizes', 'mixcapacity', 'mixboxes', 'mixlocked'];
+    'mixsizes', 'mixcapacity', 'mixboxes', 'mixplacing', 'mixbox'];
   // Where Back from Settings should return to ('projects' or 'entry').
   var settingsReturn = 'projects';
   function show(name) {
@@ -284,7 +284,7 @@
     ui.activeId = p.id;
     M.Store.saveUI(ui);
     if (p.mode === 'straight') {
-      if (p.locked) showMixLocked();
+      if (p.locked) { ensureMixPlacing(p); persist(); showMixPlacing(); }
       else showMixSizes();
     } else if (p.locked) showLocked();
     else showEntry();
@@ -1409,18 +1409,374 @@
     show('mixboxes');
   }
 
-  function showMixLocked() {
+  /* -------------------------------------------- straight-mix placing */
+  // Guidance for one size: even-up one-by-one from the pointer, then bulk per
+  // box, then the remainder one-by-one from box 1. One sentence, everything
+  // upfront, so alex knows the full plan before lifting a shirt.
+  function mixGuideText(p, idx) {
+    var N = p.mixBoxes, e = p.mixEntries[idx];
+    var ptr = mixPointer(p), Q = e.qty;
+    var euNeed = (ptr === 1) ? 0 : (N - ptr + 1);
+    if (Q <= euNeed) {
+      return 'Put 1 each in boxes ' + ptr + '\u2013' + (ptr + Q - 1) + ' (evening up).';
+    }
+    var eu = Math.min(Q, euNeed), R = Q - eu;
+    var base = Math.floor(R / N), rem = R % N;
+    var s = '';
+    if (eu > 0) s += 'Even out boxes ' + ptr + '\u2013' + N + ' (+1 each)';
+    if (base > 0) s += (s ? ', then ' : '') + 'add ' + base + ' per box';
+    if (rem > 0) {
+      if (base > 0) s += ' \u2014 ' + rem + ' will remain';
+      else s += (s ? ', then ' : '') + 'put 1 each in boxes 1\u2013' + rem;
+    }
+    return s + '.';
+  }
+  // Where the app expects a size to end: {layer, box} with boxes 1..box at
+  // layer and the rest at layer-1. Used as the slot picker's default.
+  function mixPlannedEnd(p, idx) {
+    var N = p.mixBoxes, mx = mixMaxLevel(p), ptr = mixPointer(p);
+    var Q = p.mixEntries[idx].qty;
+    var euNeed = (ptr === 1) ? 0 : (N - ptr + 1);
+    if (Q <= euNeed) return { layer: mx, box: ptr + Q - 1 };
+    var R = Q - Math.min(Q, euNeed);
+    var base = Math.floor(R / N), rem = R % N;
+    return { layer: mx + base + (rem > 0 ? 1 : 0), box: rem > 0 ? rem : N };
+  }
+  // Commit a finished size: snapshot for undo, set absolute box levels from
+  // the confirmed (layer, box), record the per-box delta for the Boxes view.
+  function commitMixFinish(p, idx, L, k) {
+    p.mixUndoStack.push({
+      sizeIdx: p.mixSizeIdx,
+      levels: p.mixLevels.slice(),
+      finishes: p.mixFinishes.slice(),
+      timelineLen: p.timeline.length
+    });
+    var N = p.mixBoxes, old = p.mixLevels, nw = [], counts = [], i;
+    for (i = 0; i < N; i++) {
+      nw[i] = (i < k) ? L : L - 1;
+      counts[i] = Math.max(0, nw[i] - old[i]);
+    }
+    p.mixLevels = nw;
+    p.mixFinishes[idx] = { layer: L, box: k, counts: counts, t: Date.now() };
+    p.timeline.push({ t: Date.now(), text: 'Finished ' + p.mixEntries[idx].size + ' \u2014 layer ' + L + ', box ' + k });
+    p.mixSizeIdx = idx + 1;
+    p.mixViewIdx = p.mixSizeIdx;
+    persist();
+    renderMixPlacing();
+  }
+  function onMixUndo() {
+    var p = activeProject();
+    if (!p || p.mode !== 'straight') return;
+    var s = p.mixUndoStack.pop();
+    if (!s) { toast('Nothing to undo'); return; }
+    p.mixLevels = s.levels;
+    p.mixFinishes = s.finishes;
+    p.mixSizeIdx = s.sizeIdx;
+    p.mixViewIdx = s.sizeIdx;
+    p.timeline.length = s.timelineLen;
+    persist();
+    renderMixPlacing();
+    toast('Undid finish');
+  }
+  // Per-size per-box counts: confirmed deltas for finished sizes, projected
+  // from the estimate for the rest. Powers the Boxes preview.
+  function mixProjection(p) {
+    var N = p.mixBoxes, lv = p.mixLevels.slice(), out = [], idx, b;
+    for (idx = 0; idx < p.mixEntries.length; idx++) {
+      var fin = p.mixFinishes[idx];
+      if (fin) { out[idx] = { size: p.mixEntries[idx].size, counts: fin.counts, done: true }; continue; }
+      var Q = p.mixEntries[idx].qty, counts = [];
+      for (b = 0; b < N; b++) counts.push(0);
+      var mx = lv[0] || 0, ptr = 1, i;
+      for (i = 1; i < N; i++) if (lv[i] > mx) mx = lv[i];
+      for (i = 0; i < N; i++) if (lv[i] < mx) { ptr = i + 1; break; }
+      var euNeed = (ptr === 1) ? 0 : (N - ptr + 1);
+      var eu = Math.min(Q, euNeed);
+      for (b = ptr - 1; b < ptr - 1 + eu; b++) { counts[b]++; lv[b]++; }
+      var R = Q - eu, base = Math.floor(R / N), rem = R % N;
+      for (b = 0; b < N; b++) { counts[b] += base; lv[b] += base; }
+      for (b = 0; b < rem; b++) { counts[b]++; lv[b]++; }
+      out[idx] = { size: p.mixEntries[idx].size, counts: counts, done: false };
+    }
+    return out;
+  }
+
+  function showMixPlacing() {
     var p = activeProject();
     if (!p || p.mode !== 'straight') return showProjects();
-    el('mixLockedTitle').textContent = p.name;
-    var rows = (p.mixEntries || []).map(function (e) {
-      return e.size + ': ' + e.qty;
-    }).join(' \u2022 ');
-    el('mixLockedSummary').innerHTML =
-      '<div><b>' + mixTotal(p) + '</b> ' + (p.itemName || 'items') + ' in <b>' +
-      p.mixBoxes + '</b> boxes (' + p.boxCapacity + ' per box)</div>' +
-      (rows ? '<div class="sub" style="margin-top:0.25rem">' + rows + '</div>' : '');
-    show('mixlocked');
+    ensureMixPlacing(p);
+    renderMixPlacing();
+    show('mixplacing');
+  }
+  function renderMixPlacing() {
+    var p = activeProject();
+    if (!p) return showProjects();
+    var done = p.mixSizeIdx >= p.mixEntries.length;
+    el('mixPlacingMain').style.display = done ? 'none' : '';
+    el('mixConsolidate').style.display = done ? '' : 'none';
+    if (done) renderMixConsolidate(p);
+    else renderMixPlacingMain(p);
+  }
+  function renderMixPlacingMain(p) {
+    if (p.mixViewIdx < 0) p.mixViewIdx = 0;
+    if (p.mixViewIdx >= p.mixEntries.length) p.mixViewIdx = p.mixEntries.length - 1;
+    var idx = p.mixViewIdx, e = p.mixEntries[idx];
+    var isCurrent = idx === p.mixSizeIdx;
+    var fin = p.mixFinishes[idx];
+    el('mixPlacingTitle').textContent = p.itemName ? p.itemName + ' \u2014 ' + (idx + 1) + '/' + p.mixEntries.length : 'Placing';
+    el('mixSizeBig').textContent = e.size;
+    var status = el('mixSizeStatus'), guide = el('mixGuide'), finishBtn = el('mixFinishSize');
+    if (isCurrent) {
+      guide.textContent = mixGuideText(p, idx);
+      status.textContent = e.qty + ' counted';
+      finishBtn.style.display = '';
+    } else if (fin) {
+      guide.textContent = '';
+      status.textContent = 'Finished at layer ' + fin.layer + ', box ' + fin.box;
+      finishBtn.style.display = 'none';
+    } else {
+      guide.textContent = '';
+      status.textContent = e.qty + ' counted \u2014 not started';
+      finishBtn.style.display = 'none';
+    }
+    el('mixUndo').disabled = !p.mixUndoStack.length;
+    renderMixTimeline(p);
+  }
+  function renderMixTimeline(p) {
+    var rows = el('mixTimelineRows');
+    rows.innerHTML = '';
+    p.timeline.forEach(function (t) {
+      var d = document.createElement('div');
+      d.textContent = M.fmtTime(t.t) + ' \u2014 ' + t.text;
+      rows.appendChild(d);
+    });
+    rows.scrollTop = rows.scrollHeight;
+  }
+  function onMixSizeJump() {
+    var p = activeProject();
+    if (!p) return;
+    var buttons = p.mixEntries.map(function (e, i) {
+      var fin = p.mixFinishes[i];
+      var st = fin ? 'done \u2014 layer ' + fin.layer + ', box ' + fin.box
+        : (i === p.mixSizeIdx ? 'placing now' : 'not started');
+      return {
+        html: e.size + ' \u2014 ' + e.qty + ' <span class="sub2">' + st + '</span>',
+        onClick: function () { p.mixViewIdx = i; persist(); renderMixPlacing(); }
+      };
+    });
+    buttons.push({ label: 'Cancel' });
+    showModal({ title: 'Jump to size', buttons: buttons });
+  }
+  function renderMixConsolidate(p) {
+    var N = p.mixBoxes, C = p.boxCapacity, lv = p.mixLevels;
+    var T = lv.reduce(function (s, x) { return s + x; }, 0);
+    var item = p.itemName || 'items';
+    var m = Math.max(0, N - Math.floor(T / C));
+    var html = '<div><b>' + T + '</b> ' + item + ' placed.</div>';
+    if (m === 0) {
+      html += '<div class="mix-big">Every box is full \u2014 nothing to move.</div>';
+    } else {
+      var firstEmpty = N - m + 1;
+      var need = 0, avail = 0, i, rows = '';
+      for (i = 0; i < N - m; i++) {
+        var add = Math.max(0, C - lv[i]);
+        need += add;
+        if (add > 0) rows += '<div class="trow' + (i % 2 ? ' alt' : '') + '"><div class="sz">Box ' + (i + 1) + '</div><div>add ' + add + '</div></div>';
+      }
+      for (i = N - m; i < N; i++) avail += lv[i];
+      var back = avail - need;
+      html += '<div class="mix-big">Empty box' + (m === 1 ? '' : 'es') + ' ' + firstEmpty + (m === 1 ? '' : '\u2013' + N) + '</div>';
+      html += '<div class="sub" style="margin-bottom:0.5rem">' + avail + ' ' + item + ' to redistribute.</div>';
+      html += rows;
+      html += '<div class="sub" style="margin-top:0.5rem">' + back + ' go back into box ' + firstEmpty + '.</div>';
+    }
+    el('mixConsolidateBody').innerHTML = html;
+  }
+
+  /* Slot-machine picker: vertical strip, smallest on top. Drag with the
+     finger — the strip tracks 1:1 — release and it snaps to the nearest
+     number. The default the app computed stays bold so it's always obvious. */
+  function makeSlotPicker(min, max, initial, label) {
+    var rootFont = parseFloat(getComputedStyle(document.documentElement).fontSize) || 18;
+    var ITEM_H = Math.round(rootFont * 3); // matches .slot-item height (3rem)
+    var values = [], v;
+    for (v = min; v <= max; v++) values.push(v);
+    var wrap = document.createElement('div');
+    wrap.classList.add('slot-picker');
+    var lab = document.createElement('div');
+    lab.classList.add('slot-label');
+    lab.textContent = label;
+    var viewport = document.createElement('div');
+    viewport.classList.add('slot-viewport');
+    var strip = document.createElement('div');
+    strip.classList.add('slot-strip');
+    values.forEach(function (n) {
+      var d = document.createElement('div');
+      d.classList.add('slot-item');
+      if (n === initial) d.classList.add('slot-default');
+      d.textContent = n;
+      strip.appendChild(d);
+    });
+    var highlight = document.createElement('div');
+    highlight.classList.add('slot-highlight');
+    viewport.appendChild(strip);
+    viewport.appendChild(highlight);
+    wrap.appendChild(lab);
+    wrap.appendChild(viewport);
+
+    var idx = initial - min, current = initial;
+    function yFor(i) { return ITEM_H - i * ITEM_H; } // 3 visible, selected in the middle
+    function paint(animate) {
+      strip.style.transition = animate ? 'transform 0.16s ease-out' : 'none';
+      strip.style.transform = 'translateY(' + yFor(idx) + 'px)';
+      var items = strip.children, k;
+      for (k = 0; k < items.length; k++) items[k].classList.toggle('sel', k === idx);
+    }
+    paint(false);
+
+    var startY = 0, startT = 0, dragging = false, pid = null;
+    viewport.style.touchAction = 'none';
+    viewport.addEventListener('pointerdown', function (e) {
+      dragging = true; pid = e.pointerId;
+      startY = e.clientY; startT = yFor(idx);
+      strip.style.transition = 'none';
+      if (viewport.setPointerCapture) try { viewport.setPointerCapture(pid); } catch (err) {}
+      e.preventDefault();
+    });
+    viewport.addEventListener('pointermove', function (e) {
+      if (!dragging || e.pointerId !== pid) return;
+      var t = startT + (e.clientY - startY);
+      var lo = yFor(values.length - 1), hi = yFor(0);
+      if (t < lo) t = lo + (t - lo) * 0.25; // rubber-band past the ends
+      if (t > hi) t = hi + (t - hi) * 0.25;
+      strip.style.transform = 'translateY(' + t + 'px)';
+      e.preventDefault();
+    });
+    function release(e) {
+      if (!dragging || (e.pointerId !== undefined && e.pointerId !== pid)) return;
+      dragging = false;
+      var t = startT + (e.clientY - startY);
+      idx = Math.round((ITEM_H - t) / ITEM_H);
+      idx = Math.max(0, Math.min(values.length - 1, idx));
+      current = values[idx];
+      paint(true);
+    }
+    viewport.addEventListener('pointerup', release);
+    viewport.addEventListener('pointercancel', release);
+    return { el: wrap, get: function () { return current; } };
+  }
+  function askMixLeftOff() {
+    var p = activeProject();
+    if (!p || p.mode !== 'straight') return;
+    var idx = p.mixSizeIdx;
+    if (idx >= p.mixEntries.length) return;
+    var plan = mixPlannedEnd(p, idx);
+    var layerPicker = makeSlotPicker(1, 999, plan.layer, 'Layer');
+    var boxPicker = makeSlotPicker(1, p.mixBoxes, plan.box, 'Box');
+    showModal({
+      title: p.mixEntries[idx].size + ' \u2014 where did you leave off?',
+      buttons: [
+        {
+          label: 'Done', primary: true, onClick: function () {
+            commitMixFinish(p, idx, layerPicker.get(), boxPicker.get());
+          }
+        },
+        { label: 'Cancel' }
+      ]
+    });
+    // slot pickers go above the buttons
+    var boxEl = el('modalBox');
+    var row = document.createElement('div');
+    row.classList.add('slots-row');
+    row.appendChild(layerPicker.el);
+    row.appendChild(boxPicker.el);
+    boxEl.insertBefore(row, boxEl.children[boxEl.children.length - 1]);
+  }
+  function onMixBoxMenu() {
+    var p = activeProject();
+    if (!p) return;
+    var buttons = [];
+    for (var i = 0; i < p.mixBoxes; i++) {
+      (function (i) {
+        buttons.push({
+          label: 'Box ' + (i + 1) + ' \u2014 ' + p.mixLevels[i],
+          onClick: function () { showMixBox(i); }
+        });
+      })(i);
+    }
+    buttons.push({ label: 'Cancel' });
+    showModal({ title: 'Pick a box', buttons: buttons });
+  }
+  var mixBoxIdx = 0;
+  function showMixBox(i) {
+    mixBoxIdx = i;
+    renderMixBox();
+    show('mixbox');
+  }
+  function renderMixBox() {
+    var p = activeProject();
+    if (!p || p.mode !== 'straight') return showProjects();
+    var proj = mixProjection(p);
+    el('mixBoxTitle').textContent = 'Box ' + (mixBoxIdx + 1) + ' of ' + p.mixBoxes;
+    var anyProjected = proj.some(function (s) { return !s.done; });
+    el('mixBoxNote').textContent = anyProjected
+      ? 'Preview \u2014 unfinished sizes are projected from your counts.'
+      : 'Final \u2014 all sizes finished.';
+    var tb = el('mixBoxRows');
+    tb.innerHTML = '';
+    var total = 0, i;
+    proj.forEach(function (s, si) {
+      var c = s.counts[mixBoxIdx];
+      if (!c) return;
+      total += c;
+      var row = document.createElement('div');
+      row.className = 'trow' + (si % 2 ? ' alt' : '');
+      var sz = document.createElement('div');
+      sz.className = 'sz';
+      sz.textContent = s.size;
+      var ct = document.createElement('div');
+      ct.textContent = '\u00d7' + c + (s.done ? '' : ' *');
+      row.appendChild(sz);
+      row.appendChild(ct);
+      tb.appendChild(row);
+    });
+    var tr = document.createElement('div');
+    tr.className = 'trow total';
+    var tl = document.createElement('div');
+    tl.className = 'sz';
+    tl.textContent = 'Total';
+    var tv = document.createElement('div');
+    tv.textContent = total;
+    tr.appendChild(tl);
+    tr.appendChild(tv);
+    tb.appendChild(tr);
+  }
+
+  // Straight-mix placing state: per-box levels, first unfinished size,
+  // viewed size (arrows), per-size finish records, undo snapshots.
+  function ensureMixPlacing(p) {
+    var N = p.mixBoxes > 0 ? p.mixBoxes : 1;
+    if (!Array.isArray(p.mixLevels) || p.mixLevels.length !== N) {
+      p.mixLevels = [];
+      for (var i = 0; i < N; i++) p.mixLevels.push(0);
+    }
+    if (!Array.isArray(p.mixFinishes)) p.mixFinishes = [];
+    if (!Array.isArray(p.mixUndoStack)) p.mixUndoStack = [];
+    if (!(p.mixSizeIdx >= 0)) p.mixSizeIdx = 0;
+    if (!(p.mixViewIdx >= 0)) p.mixViewIdx = p.mixSizeIdx;
+    if (!Array.isArray(p.timeline)) p.timeline = [];
+  }
+  // 1-indexed box of the first box below the max level; 1 when all are level.
+  function mixPointer(p) {
+    var lv = p.mixLevels, mx = lv[0] || 0, i;
+    for (i = 1; i < lv.length; i++) if (lv[i] > mx) mx = lv[i];
+    for (i = 0; i < lv.length; i++) if (lv[i] < mx) return i + 1;
+    return 1;
+  }
+  function mixMaxLevel(p) {
+    var mx = 0, i;
+    for (i = 0; i < p.mixLevels.length; i++) if (p.mixLevels[i] > mx) mx = p.mixLevels[i];
+    return mx;
   }
 
   /* ------------------------------------------------------------------- wiring */
@@ -1610,6 +1966,8 @@
         case 'placing': showPlacing(); break;
         case 'box': showBox(boxIdx); break;
         case 'stapling': showStapling(); break;
+        case 'mixplacing': showMixPlacing(); break;
+        case 'mixbox': showMixBox(mixBoxIdx); break;
         default: showProjects();
       }
     };
@@ -1721,11 +2079,35 @@
       var p = activeProject();
       if (!p) return showProjects();
       p.locked = true;
+      ensureMixPlacing(p);
       persist();
       toast('Project saved');
-      showProjects();
+      showMixPlacing();
     };
-    el('mixLockedBack').onclick = function () { showProjects(); };
+    el('mixPlacingBack').onclick = function () { showProjects(); };
+    el('mixSizeBig').onclick = onMixSizeJump;
+    el('mixPlacingTitle').onclick = onMixSizeJump;
+    el('mixLeft').onclick = function () {
+      var p = activeProject();
+      if (!p) return;
+      p.mixViewIdx = Math.max(0, p.mixViewIdx - 1);
+      persist();
+      renderMixPlacing();
+    };
+    el('mixRight').onclick = function () {
+      var p = activeProject();
+      if (!p) return;
+      p.mixViewIdx = Math.min(p.mixEntries.length - 1, p.mixViewIdx + 1);
+      persist();
+      renderMixPlacing();
+    };
+    el('mixUndo').onclick = onMixUndo;
+    el('mixFinishSize').onclick = askMixLeftOff;
+    el('mixBoxMenuBtn').onclick = onMixBoxMenu;
+    el('mixBoxBack').onclick = function () { showMixPlacing(); };
+    el('mixConsolidateBack').onclick = function () { showProjects(); };
+    el('mixPlacingSettings').onclick = function () { settingsReturn = 'mixplacing'; showSettings('project', activeProject()); };
+    el('mixBoxSettings').onclick = function () { settingsReturn = 'mixbox'; showSettings('project', activeProject()); };
   }
 
   document.addEventListener('DOMContentLoaded', function () {

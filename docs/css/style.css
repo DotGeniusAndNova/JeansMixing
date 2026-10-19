@@ -258,6 +258,30 @@ button:disabled { opacity: 0.35; }
 .mix-row input.mix-qty { flex: 2; min-width: 0; text-align: center; }
 .mix-empty { color: var(--muted); text-align: center; padding: 1.5rem 0; }
 .mix-big { font-size: 1.6rem; font-weight: bold; margin: 0.5rem 0; }
+/* Slot-machine pickers (straight-mix "where did you leave off") */
+.slots-row { display: flex; gap: 1.5rem; justify-content: center; margin: 0.5rem 0 1rem; }
+.slot-picker { display: flex; flex-direction: column; align-items: center; }
+.slot-label { font-weight: bold; font-size: 1.1rem; margin-bottom: 0.333rem; }
+.slot-viewport {
+  position: relative; height: 9rem; width: 5.5rem; overflow: hidden;
+  border: 0.111rem solid var(--border); border-radius: 0.444rem;
+  background: var(--card);
+  touch-action: none; user-select: none; -webkit-user-select: none;
+  cursor: grab;
+}
+.slot-strip { position: absolute; top: 0; left: 0; right: 0; will-change: transform; }
+.slot-item {
+  height: 3rem; display: flex; align-items: center; justify-content: center;
+  font-size: 1.5rem; color: var(--muted);
+}
+.slot-item.slot-default { font-weight: bold; color: var(--ink); }
+.slot-item.sel { font-weight: bold; color: var(--ink); font-size: 1.75rem; }
+.slot-highlight {
+  position: absolute; top: 3rem; height: 3rem; left: 0; right: 0;
+  border-top: 0.111rem solid var(--accent); border-bottom: 0.111rem solid var(--accent);
+  pointer-events: none;
+}
+#modalBox .sub2 { color: var(--muted); font-size: 0.9rem; }
 .stepper { display: flex; align-items: center; gap: 0.556rem; }
 .stepper button { min-height: 2.667rem; min-width: 3rem; font-size: 1.3rem; }
 .stepper span { font-size: 1.2rem; font-weight: bold; min-width: 1.667rem; text-align: center; }
