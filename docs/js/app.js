@@ -8,7 +8,7 @@
   var M = window.JM;
   // Single source of truth for the displayed version (Projects title).
   // Bump this with every release, alongside the ?v= cache-busters.
-  var APP_VERSION = '1.2.5';
+  var APP_VERSION = '1.2.6';
 
   function el(id) { return document.getElementById(id); }
 
@@ -1598,7 +1598,9 @@
      number. The default the app computed stays bold so it's always obvious. */
   function makeSlotPicker(min, max, initial, label) {
     var rootFont = parseFloat(getComputedStyle(document.documentElement).fontSize) || 18;
-    var ITEM_H = Math.round(rootFont * 3); // matches .slot-item height (3rem)
+    // exact fractional height — rounding here drifts a full row by ~150 items
+    // at non-100% UI scales, misaligning the highlight from the selected value
+    var ITEM_H = rootFont * 3; // matches .slot-item height (3rem)
     var values = [], v;
     for (v = min; v <= max; v++) values.push(v);
     var wrap = document.createElement('div');
