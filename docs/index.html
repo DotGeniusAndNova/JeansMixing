@@ -9,7 +9,13 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <title>Jeans Mixing</title>
 <!-- ?v= cache-buster: bump every release so phones fetch fresh files -->
-<link rel="stylesheet" href="css/style.css?v=web-v1.2.6a">
+<meta name="theme-color" content="#3949AB">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="css/style.css?v=web-v1.2.7">
 </head>
 <body>
 
@@ -206,6 +212,10 @@
     </div>
     <button id="setExperimentalToggle" class="toggle">Off</button>
   </div>
+  <div class="btn-col no-print" id="installWrap" style="margin-top:1.111rem">
+    <button id="installAppBtn">Install app</button>
+    <div class="sub" id="installAppNote" style="margin-top:0.25rem">Add it to your home screen for offline use, no browser bar.</div>
+  </div>
   <div class="btn-col no-print" id="resetWrap" style="margin-top:1.111rem">
     <button id="resetDefaultsBtn" class="danger">Reset to defaults</button>
   </div>
@@ -310,7 +320,7 @@
 <div id="modalOverlay"><div id="modalBox"></div></div>
 <div id="toast"></div>
 
-<script src="js/model.js?v=web-v1.2.6a"></script>
-<script src="js/app.js?v=web-v1.2.6a"></script>
+<script src="js/model.js?v=web-v1.2.7"></script>
+<script src="js/app.js?v=web-v1.2.7"></script>
 </body>
 </html>

@@ -8,7 +8,7 @@
   var M = window.JM;
   // Single source of truth for the displayed version (Projects title).
   // Bump this with every release, alongside the ?v= cache-busters.
-  var APP_VERSION = '1.2.6';
+  var APP_VERSION = '1.2.7';
 
   function el(id) { return document.getElementById(id); }
 
@@ -1108,7 +1108,43 @@
   function showSettings(mode, project) {
     if (mode) settingsCtx = { mode: mode, project: project || null };
     renderSettings();
+    updateInstallBtn();
     show('settings');
+  }
+  /* PWA install: service worker for offline, beforeinstallprompt for the
+     native install dialog, iOS/manual fallback instructions. */
+  var installPromptEvt = null;
+  function isStandalone() {
+    var nav = window.navigator || {};
+    return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
+      nav.standalone === true;
+  }
+  function updateInstallBtn() {
+    var w = el('installWrap');
+    if (w) w.style.display = isStandalone() ? 'none' : '';
+  }
+  function onInstallApp() {
+    if (installPromptEvt) {
+      installPromptEvt.prompt();
+      if (installPromptEvt.userChoice) {
+        installPromptEvt.userChoice.then(function (choice) {
+          if (choice && choice.outcome === 'accepted') installPromptEvt = null;
+          updateInstallBtn();
+        }).catch(function () {});
+      }
+    } else if (/iphone|ipad|ipod/i.test((window.navigator || {}).userAgent || '')) {
+      showModal({
+        title: 'Install the app',
+        message: 'Tap Share, then "Add to Home Screen". It opens full-screen and works offline.',
+        buttons: [{ label: 'Got it', primary: true }]
+      });
+    } else {
+      showModal({
+        title: 'Install the app',
+        message: 'Use your browser\u2019s menu \u2192 "Install app" or "Add to Home Screen". It opens full-screen and works offline.',
+        buttons: [{ label: 'Got it', primary: true }]
+      });
+    }
   }
 
   function renderSettings() {
@@ -1586,7 +1622,8 @@
       }
       for (i = N - m; i < N; i++) avail += lv[i];
       var back = avail - need;
-      html += '<div class="mix-big">Empty box' + (m === 1 ? '' : 'es') + ' ' + firstEmpty + (m === 1 ? '' : '\u2013' + N) + '</div>';
+      html += '<div class="mix-big">Empty box' + (m === 1 ? '' : 'es') + ' ' + firstEmpty + (m === 1 ? '' : '\u2013' + N) +
+        ' (' + m + ' box' + (m === 1 ? '' : 'es') + ')</div>';
       html += '<div class="sub" style="margin-bottom:0.5rem">' + avail + ' ' + item + ' to redistribute.</div>';
       html += rows;
       html += '<div class="sub" style="margin-top:0.5rem">' + back + ' go back into box ' + firstEmpty + '.</div>';
@@ -2045,6 +2082,21 @@
       renderSettings();
       toast(settings.experimental ? 'Experimental features on' : 'Experimental features off');
     };
+    el('installAppBtn').onclick = onInstallApp;
+    window.addEventListener('beforeinstallprompt', function (e) {
+      e.preventDefault();
+      installPromptEvt = e;
+      updateInstallBtn();
+    });
+    window.addEventListener('appinstalled', function () {
+      installPromptEvt = null;
+      updateInstallBtn();
+      toast('App installed');
+    });
+    var nav = window.navigator || {};
+    if ('serviceWorker' in nav) {
+      nav.serviceWorker.register('sw.js').catch(function () {});
+    }
     el('resetDefaultsBtn').onclick = function () {
       var isProj = settingsCtx.mode === 'project' && !!settingsCtx.project;
       showModal({
