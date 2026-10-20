@@ -15,7 +15,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-<link rel="stylesheet" href="css/style.css?v=web-v1.2.7">
+<link rel="stylesheet" href="css/style.css?v=web-v1.3">
 </head>
 <body>
 
@@ -115,7 +115,7 @@
     <div class="btn-row">
       <button id="boxMenuBtn">&#9776; Boxes</button>
       <button id="staplingBtn">stapling</button>
-      <button id="reviewSizesBtn">Review sizes</button>
+      <button id="reviewSizesBtn">&#9776; Menu</button>
     </div>
     <div class="timeline-label">History</div>
     <div class="timeline" id="timelineRows"></div>
@@ -208,13 +208,17 @@
   <div class="set-row">
     <div>
       <div class="set-label">Experimental features</div>
-      <div class="sub">Try in-progress features like Straight Mix</div>
+      <div class="sub">Try in-progress features as they arrive</div>
     </div>
     <button id="setExperimentalToggle" class="toggle">Off</button>
   </div>
   <div class="btn-col no-print" id="installWrap" style="margin-top:1.111rem">
     <button id="installAppBtn">Install app</button>
     <div class="sub" id="installAppNote" style="margin-top:0.25rem">Add it to your home screen for offline use, no browser bar.</div>
+  </div>
+  <div class="btn-col no-print" id="resetProjectWrap" style="margin-top:1.111rem; display:none">
+    <button id="resetProjectBtn" class="danger">Reset project</button>
+    <div class="sub" style="margin-top:0.25rem">Clears all placing progress. The size list stays, and it stays locked.</div>
   </div>
   <div class="btn-col no-print" id="resetWrap" style="margin-top:1.111rem">
     <button id="resetDefaultsBtn" class="danger">Reset to defaults</button>
@@ -239,11 +243,13 @@
   <div class="topbar no-print">
     <button id="mixSizesBack">&larr; Back</button>
     <div class="title" id="mixSizesTitle">Sizes</div>
-    <button id="mixSizesAdd" class="icon-btn" aria-label="Add size">&#65291;</button>
   </div>
   <div class="sub" id="mixTotalLine" style="margin-bottom:0.5rem"></div>
   <div id="mixSizeList"></div>
   <div class="btn-col no-print" style="margin-top:0.889rem">
+    <button id="mixSizesAdd">&#65291; Add size</button>
+  </div>
+  <div class="btn-col no-print" style="margin-top:0.556rem">
     <button id="mixSizesDone" class="primary">Done</button>
   </div>
 </section>
@@ -320,7 +326,7 @@
 <div id="modalOverlay"><div id="modalBox"></div></div>
 <div id="toast"></div>
 
-<script src="js/model.js?v=web-v1.2.7"></script>
-<script src="js/app.js?v=web-v1.2.7"></script>
+<script src="js/model.js?v=web-v1.3"></script>
+<script src="js/app.js?v=web-v1.3"></script>
 </body>
 </html>

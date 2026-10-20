@@ -159,6 +159,7 @@ button:disabled { opacity: 0.35; }
   border: 0.056rem solid var(--border); cursor: pointer; user-select: none; touch-action: manipulation;
 }
 .placed-line .over { color: var(--danger); text-decoration: underline; font-weight: bold; }
+.placed-line .short { color: var(--danger); font-weight: bold; }
 .add-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.556rem; margin: 0.556rem 0; }
 .add-row button { min-height: 3.556rem; font-size: 1.4rem; font-weight: bold; }
 .nav-row { display: grid; grid-template-columns: 1fr 1fr 1.4fr; gap: 0.556rem; margin: 0.556rem 0; }

@@ -8,7 +8,7 @@
   var M = window.JM;
   // Single source of truth for the displayed version (Projects title).
   // Bump this with every release, alongside the ?v= cache-busters.
-  var APP_VERSION = '1.2.7';
+  var APP_VERSION = '1.3';
 
   function el(id) { return document.getElementById(id); }
 
@@ -190,18 +190,29 @@
     var wrap = document.createElement('div');
     wrap.className = 'mbtns' + (o.rowButtons ? ' row2' : '');
     box.appendChild(wrap);
+    var primaryBtn = null;
     (o.buttons || []).forEach(function (b) {
       var btn = document.createElement('button');
       if (b.html) btn.innerHTML = b.html;
       else btn.textContent = b.label;
       if (b.primary) btn.classList.add('primary');
       if (b.danger) btn.classList.add('danger');
+      if (b.disabled) btn.disabled = true;
+      if (b.primary && b.onClick && !primaryBtn) primaryBtn = btn;
       btn.onclick = function () {
         var r = b.onClick ? b.onClick({ close: close, input: inputEl, inputs: inputEls }) : undefined;
         if (r !== false) close();
       };
       wrap.appendChild(btn);
     });
+    // Enter in a single-input popup presses the primary button (e.g. "Done").
+    if (inputEls.length === 1 && primaryBtn) {
+      inputEls[0].addEventListener('keydown', function (ev) {
+        if (ev.key !== 'Enter') return;
+        ev.preventDefault();
+        if (!primaryBtn.disabled) primaryBtn.onclick();
+      });
+    }
     ov.classList.add('open');
     if (inputEl) { inputEl.focus(); inputEl.select(); }
   }
@@ -643,6 +654,8 @@
     el('sizeBig').textContent = M.prettySize(e);
 
     // "13 out of 24 placed (11 left)". Overplaced renders RED and UNDERLINED.
+    // A confirmed shortfall (done but under) renders the whole line RED with
+    // "(0 left)" — the plan's numbers stay untouched.
     var left = Math.max(0, needed - placed);
     var pv = el('placedView');
     pv.innerHTML = '';
@@ -652,6 +665,11 @@
       s.textContent = placed;
       pv.appendChild(s);
       pv.appendChild(document.createTextNode(' out of ' + needed + ' placed (' + left + ' left)'));
+    } else if (placed < needed && p.doneSizes.indexOf(current) >= 0) {
+      var ss = document.createElement('span');
+      ss.className = 'short';
+      ss.textContent = placed + ' out of ' + needed + ' placed (0 left)';
+      pv.appendChild(ss);
     } else {
       pv.textContent = placed + ' out of ' + needed + ' placed (' + left + ' left)';
     }
@@ -661,19 +679,28 @@
     var boxNo = r.nextBox + 1;
     var blv = el('bundleLayerView');
     var pFlip = projectFlip(p), pBundles = projectBundles(p);
-    if (!pFlip) {
+    var fc = el('flipCue');
+    // Preview mode: looking ahead at a size past the first unfinished one.
+    // The flip cue's reserved space shows "(preview)" instead — no layout shift.
+    if (current > firstOpenSize(p)) {
       blv.textContent = 'layer ' + (inNext + 1) + ', box ' + boxNo;
-      el('flipCue').style.visibility = 'hidden';
+      fc.textContent = '(preview)';
+      fc.style.visibility = 'visible';
+    } else if (!pFlip) {
+      blv.textContent = 'layer ' + (inNext + 1) + ', box ' + boxNo;
+      fc.textContent = '\uD83D\uDD04 flip after this pair';
+      fc.style.visibility = 'hidden';
     } else {
       var slot = bundleSlot(inNext, pBundles);
+      fc.textContent = '\uD83D\uDD04 flip after this pair';
       if (!slot) {
         blv.textContent = 'layer ' + (inNext + 1) + ', box ' + boxNo;
-        el('flipCue').style.visibility = 'hidden';
+        fc.style.visibility = 'hidden';
       } else {
         blv.textContent = slot.layers === 1
           ? slot.name + ', box ' + boxNo
           : slot.name + ', layer ' + slot.layer + ', box ' + boxNo;
-        el('flipCue').style.visibility = (slot.lastLayer && !slot.isLast) ? 'visible' : 'hidden';
+        fc.style.visibility = (slot.lastLayer && !slot.isLast) ? 'visible' : 'hidden';
       }
     }
 
@@ -734,8 +761,68 @@
     });
   }
 
+  /** Find a button inside the open modal by its label prefix. */
+  function findModalButton(prefix) {
+    var found = null;
+    (function walk(node) {
+      (node.children || []).forEach(function (c) {
+        if ((c.tagName || '').toLowerCase() === 'button' &&
+            c.textContent.indexOf(prefix) === 0) found = c;
+        walk(c);
+      });
+    })(el('modalBox'));
+    return found;
+  }
+  /**
+   * Placing on a size ahead of the first unfinished one: warn first.
+   * Override is locked for 5 seconds (countdown on the button) because
+   * it's almost never the right move.
+   */
+  function warnAhead(n) {
+    var p = activeProject();
+    showModal({
+      title: 'Too far ahead?',
+      message: 'There are unfinished sizes before ' + M.prettySize(p.entries[current]) +
+        '. Placing here might be a mistake.',
+      buttons: [
+        {
+          label: 'Go to current size', primary: true, onClick: function () {
+            current = firstOpenSize(p); saveCurrent(); renderPlacing();
+          }
+        },
+        {
+          label: 'Override', onClick: function () {
+            p.aheadOk = p.aheadOk || {};
+            p.aheadOk[current] = true;
+            persist();
+            onAdd(n);
+          }
+        },
+        { label: 'Cancel' }
+      ]
+    });
+    var btn = findModalButton('Override');
+    if (!btn) return;
+    btn.disabled = true;
+    var left = 5;
+    btn.textContent = 'Override (' + left + ')';
+    var iv = setInterval(function () {
+      left--;
+      if (left <= 0) {
+        clearInterval(iv);
+        btn.disabled = false;
+        btn.textContent = 'Override';
+      } else {
+        btn.textContent = 'Override (' + left + ')';
+      }
+    }, 1000);
+  }
   function onAdd(n) {
     var p = activeProject();
+    if (current > firstOpenSize(p) && !(p.aheadOk && p.aheadOk[current])) {
+      warnAhead(n);
+      return;
+    }
     var r = M.replay(p);
     var remaining = p.entries[current].qty - r.placedPerSize[current];
     if (remaining <= 0) return;
@@ -777,7 +864,7 @@
   function syncDone(p) {
     var r = M.replay(p);
     p.doneSizes = p.doneSizes.filter(function (i) {
-      return r.placedPerSize[i] >= p.entries[i].qty;
+      return r.placedPerSize[i] >= p.entries[i].qty || (p.shortOk && p.shortOk[i]);
     });
   }
 
@@ -869,19 +956,16 @@
   }
 
   /**
-   * Controlled edit of the locked plan: this size's needed := placed, the
-   * shortfall moves to the NEXT size's needed (total preserved, box math stays
-   * valid). Last size: just accept, the user handles it IRL.
+   * Shortfall accepted: the size is done as-is. The plan's quantities are
+   * NEVER rewritten (alex's rule) — the size just shows its true count in
+   * red with "(0 left)", and shortOk remembers the confirmation so
+   * syncDone doesn't un-mark it.
    */
   function acceptShortfall(placed, needed) {
     var p = activeProject();
-    var shortfall = needed - placed;
-    p.entries[current].qty = placed;
-    if (current < p.entries.length - 1) {
-      p.entries[current + 1].qty += shortfall;
-    }
+    p.shortOk = p.shortOk || {};
+    p.shortOk[current] = true;
     if (p.doneSizes.indexOf(current) < 0) p.doneSizes.push(current);
-    syncDone(p);
     persist();
     current++;
     saveCurrent();
@@ -947,10 +1031,11 @@
       var placed = r.placedPerSize[i];
       var needed = e.qty;
       var left = Math.max(0, needed - placed);
+      var doneShort = placed < needed && p.doneSizes.indexOf(i) >= 0;
       var html = M.prettySize(e) + ' \u2014 ' +
         (placed > needed
           ? '<span class="over">' + placed + '</span> out of ' + needed + ' placed (' + left + ' left)'
-          : placed + ' out of ' + needed + ' placed (' + left + ' left)');
+          : placed + ' out of ' + needed + ' placed (' + (doneShort ? 0 : left) + ' left)');
       return {
         html: html,
         onClick: function () { current = i; saveCurrent(); renderPlacing(); }
@@ -1177,6 +1262,39 @@
     xt.textContent = settings.experimental ? 'On' : 'Off';
     xt.classList.toggle('on', settings.experimental);
     el('resetWrap').style.display = locked ? 'none' : '';
+    // "Reset project" only for a finished regular-pull project: wipe the
+    // placing, keep the plan and the lock.
+    var rp = settingsCtx.project;
+    var finished = isProj && rp && rp.mode !== 'straight' &&
+      (rp.entries || []).length > 0 &&
+      (rp.doneSizes || []).length >= rp.entries.length;
+    el('resetProjectWrap').style.display = finished ? '' : 'none';
+  }
+  function onResetProject() {
+    showModal({
+      title: 'Reset project?',
+      message: 'This clears all placing progress, history and stapling counts. ' +
+        'The size list stays, and the project stays locked.',
+      rowButtons: true,
+      buttons: [
+        {
+          label: 'Reset', danger: true, onClick: function () {
+            var p = activeProject();
+            p.placingEvents = [];
+            p.timeline = [];
+            p.doneSizes = [];
+            p.stapled = [];
+            p.shortOk = {};
+            p.aheadOk = {};
+            current = firstOpenSize(p);
+            saveCurrent();
+            persist();
+            showPlacing();
+          }
+        },
+        { label: 'Cancel' }
+      ]
+    });
   }
 
   function bumpScale(d) {
@@ -1346,6 +1464,16 @@
     renderMixSizes();
     show('mixsizes');
   }
+  /** Focus the size input of the nth .mix-row on the straight-mix screen. */
+  function focusMixRowSize(idx) {
+    var rows = el('mixSizeList').children, seen = -1, k;
+    for (k = 0; k < rows.length; k++) {
+      if ((rows[k].className || '') === 'mix-row') {
+        seen++;
+        if (seen === idx) { rows[k].children[0].focus(); return; }
+      }
+    }
+  }
   function renderMixSizes() {
     var p = activeProject();
     if (!p) return showProjects();
@@ -1375,6 +1503,12 @@
         e.size = '';
         persist();
       });
+      // Enter in the size box hops to this row's quantity box
+      sizeIn.addEventListener('keydown', function (ev) {
+        if (ev.key !== 'Enter') return;
+        ev.preventDefault();
+        qtyIn.focus();
+      });
       var qtyIn = document.createElement('input');
       qtyIn.type = 'number';
       qtyIn.className = 'mix-qty';
@@ -1394,6 +1528,20 @@
         e.qty = 0;
         persist();
         updateMixTotal();
+      });
+      // Enter in the quantity box hops to the NEXT row's size box; on the
+      // last row it adds a fresh row and lands there.
+      qtyIn.addEventListener('keydown', function (ev) {
+        if (ev.key !== 'Enter') return;
+        ev.preventDefault();
+        if (i < p.mixEntries.length - 1) {
+          focusMixRowSize(i + 1);
+        } else {
+          p.mixEntries.push({ size: '', qty: 0 });
+          persist();
+          renderMixSizes();
+          focusMixRowSize(p.mixEntries.length - 1);
+        }
       });
       var del = document.createElement('button');
       del.className = 'icon-btn danger';
@@ -1710,7 +1858,17 @@
     }
     viewport.style.touchAction = 'none';
     viewport.addEventListener('pointerdown', function (e) {
-      stopMomentum();
+      if (momentumId != null) {
+        // grabbed mid-spin: adopt the reel's CURRENT visual position so the
+        // finger takes over exactly where the numbers are, no jump back
+        stopMomentum();
+        var m = /translateY\((-?[0-9.]+)px\)/.exec(strip.style.transform || '');
+        if (m) {
+          idx = Math.max(0, Math.min(values.length - 1,
+            Math.round((ITEM_H - parseFloat(m[1])) / ITEM_H)));
+          current = values[idx];
+        }
+      }
       dragging = true; pid = e.pointerId;
       startY = e.clientY; startT = yFor(idx);
       moveHist = [{ t: Date.now(), y: e.clientY }];
@@ -1979,7 +2137,6 @@
       });
     }
     el('newProjectBtn').onclick = function () {
-      if (!settings.experimental) { createRegularProject(); return; }
       showModal({
         title: 'New project',
         rowButtons: true,
@@ -2030,7 +2187,29 @@
     el('placeDone').onclick = onSizeDone;
     el('boxMenuBtn').onclick = onBoxMenu;
     el('staplingBtn').onclick = showStapling;
-    el('reviewSizesBtn').onclick = function () { current = 0; saveCurrent(); renderPlacing(); };
+    el('reviewSizesBtn').onclick = onPlacingMenu;
+  /** Placing menu: review sizes, preparation (coming soon), go to current. */
+  function onPlacingMenu() {
+    var p = activeProject();
+    if (!p) return;
+    showModal({
+      title: 'Menu',
+      buttons: [
+        {
+          label: 'Review sizes', onClick: function () {
+            current = 0; saveCurrent(); renderPlacing();
+          }
+        },
+        { label: 'Preparation (coming soon)', disabled: true },
+        {
+          label: 'Go to current size', onClick: function () {
+            current = firstOpenSize(p); saveCurrent(); renderPlacing();
+          }
+        },
+        { label: 'Cancel' }
+      ]
+    });
+  }
     el('resetPlacingBtn').onclick = onResetPlacing;
     el('completeBack').onclick = function () { showProjects(); };
     // box detail
@@ -2097,6 +2276,7 @@
     if ('serviceWorker' in nav) {
       nav.serviceWorker.register('sw.js').catch(function () {});
     }
+    el('resetProjectBtn').onclick = onResetProject;
     el('resetDefaultsBtn').onclick = function () {
       var isProj = settingsCtx.mode === 'project' && !!settingsCtx.project;
       showModal({
