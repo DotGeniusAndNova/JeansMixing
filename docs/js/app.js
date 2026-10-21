@@ -8,7 +8,7 @@
   var M = window.JM;
   // Single source of truth for the displayed version (Projects title).
   // Bump this with every release, alongside the ?v= cache-busters.
-  var APP_VERSION = '1.3';
+  var APP_VERSION = '1.3.1';
 
   function el(id) { return document.getElementById(id); }
 
@@ -134,6 +134,11 @@
   projects.forEach(function (p) {
     if (p.mode !== 'straight') p.mode = 'regular';
     if (!(p.pairsPerBox > 0)) p.pairsPerBox = 25;
+    // Projects locked before origQty existed: their current counts are the
+    // only baseline available — transfers from here on still get flagged.
+    (p.entries || []).forEach(function (e) {
+      if (e.origQty == null) e.origQty = e.qty;
+    });
     if (!Array.isArray(p.bundles)) p.bundles = cloneBundles(defaultSettings().bundles);
     if (typeof p.flippingEnabled !== 'boolean') p.flippingEnabled = settings.flippingEnabled;
     if (p.mode === 'straight' && !Array.isArray(p.mixEntries)) p.mixEntries = [];
@@ -566,6 +571,10 @@
             p.locked = true;
             p.lockedBoxCount = boxes;
             p.entryDraft = null;
+            // The counts as typed, frozen at lock time. Placing may later
+            // change a size's qty (transfers); origQty is how the UI knows
+            // to flag the changed number (green y).
+            p.entries.forEach(function (e) { e.origQty = e.qty; });
             persist();
             showLocked();
           }
@@ -655,23 +664,38 @@
 
     // "13 out of 24 placed (11 left)". Overplaced renders RED and UNDERLINED.
     // A confirmed shortfall (done but under) renders the whole line RED with
-    // "(0 left)" — the plan's numbers stay untouched.
+    // "(0 left)". A "y" changed by a transfer renders GREEN (just the digit)
+    // in every branch — green wins over the inherited red inside .short.
     var left = Math.max(0, needed - placed);
     var pv = el('placedView');
     pv.innerHTML = '';
+    var yChanged = e.origQty != null && needed !== e.origQty;
+    function yNode() {
+      if (!yChanged) return document.createTextNode(String(needed));
+      var ys = document.createElement('span');
+      ys.className = 'yadj';
+      ys.textContent = String(needed);
+      return ys;
+    }
     if (placed > needed) {
       var s = document.createElement('span');
       s.className = 'over';
       s.textContent = placed;
       pv.appendChild(s);
-      pv.appendChild(document.createTextNode(' out of ' + needed + ' placed (' + left + ' left)'));
+      pv.appendChild(document.createTextNode(' out of '));
+      pv.appendChild(yNode());
+      pv.appendChild(document.createTextNode(' placed (' + left + ' left)'));
     } else if (placed < needed && p.doneSizes.indexOf(current) >= 0) {
       var ss = document.createElement('span');
       ss.className = 'short';
-      ss.textContent = placed + ' out of ' + needed + ' placed (0 left)';
+      ss.appendChild(document.createTextNode(placed + ' out of '));
+      ss.appendChild(yNode());
+      ss.appendChild(document.createTextNode(' placed (0 left)'));
       pv.appendChild(ss);
     } else {
-      pv.textContent = placed + ' out of ' + needed + ' placed (' + left + ' left)';
+      pv.appendChild(document.createTextNode(placed + ' out of '));
+      pv.appendChild(yNode());
+      pv.appendChild(document.createTextNode(' placed (' + left + ' left)'));
     }
 
     // Bundle/layer slot of the upcoming placement (next box in line).
@@ -844,8 +868,28 @@
     }
     if (idx < 0) return;
     var removed = p.placingEvents.splice(idx, 1)[0];
-    p.timeline.push({ size: current, t: Date.now(), text: 'undo +' + removed.count });
-    syncDone(p);
+    if (removed.qtyTransfer) {
+      // Undoing a Done: revert the quantity transfer into the next size AND
+      // reopen this size, so the pair of changes can never drift apart.
+      var tr = removed.qtyTransfer;
+      var beforeQty = p.entries[tr.idx].qty;
+      p.entries[tr.idx].qty -= tr.delta;
+      p.doneSizes = p.doneSizes.filter(function (i) { return i !== current; });
+      if (p.shortOk) delete p.shortOk[current];
+      p.timeline.push({ size: current, t: Date.now(),
+        text: 'undo transfer (' + M.prettySize(p.entries[tr.idx]) + ' back to ' +
+          p.entries[tr.idx].qty + ')' });
+      p.timeline.push({ size: tr.idx, t: Date.now(),
+        text: 'changed total count from ' + beforeQty + ' back to ' + p.entries[tr.idx].qty });
+    } else {
+      // Name the box the dealing has stepped back to: the box holding the
+      // most recent remaining pair (the undone pair's predecessor).
+      var rr = M.replay(p), nb = M.boxes(p), boxTxt = '';
+      if (nb > 0) boxTxt = ', now at box ' + (((rr.nextBox - 1) % nb + nb) % nb + 1);
+      p.timeline.push({ size: current, t: Date.now(),
+        text: 'undo +' + removed.count + boxTxt });
+      syncDone(p);
+    }
     persist();
     renderPlacing();
   }
@@ -873,7 +917,9 @@
     var remaining = k;
     for (var i = p.placingEvents.length - 1; i >= 0 && remaining > 0; i--) {
       var e = p.placingEvents[i];
-      if (e.size === sizeIdx) {
+      // qtyTransfer records are not placements: never consume or drop them —
+      // only an explicit Undo on their size reverts them.
+      if (e.size === sizeIdx && !e.qtyTransfer) {
         if (e.count <= remaining) {
           remaining -= e.count;
           p.placingEvents.splice(i, 1);
@@ -935,9 +981,15 @@
     var placed = r.placedPerSize[current];
     var needed = p.entries[current].qty;
     if (placed < needed) {
+      var sfMsg = 'You only placed ' + placed + ' out of ' + needed + '.';
+      if (current < p.entries.length - 1) {
+        sfMsg += ' The missing ' + (needed - placed) + ' will be added to ' +
+          M.prettySize(p.entries[current + 1]) + '.';
+      }
+      sfMsg += ' Are you sure?';
       showModal({
         title: 'Shortfall?',
-        message: 'You only placed ' + placed + ' out of ' + needed + '. Are you sure?',
+        message: sfMsg,
         rowButtons: true,
         buttons: [
           { label: 'Yes', primary: true, onClick: function () { acceptShortfall(placed, needed); } },
@@ -956,15 +1008,28 @@
   }
 
   /**
-   * Shortfall accepted: the size is done as-is. The plan's quantities are
-   * NEVER rewritten (alex's rule) — the size just shows its true count in
-   * red with "(0 left)", and shortOk remembers the confirmation so
-   * syncDone doesn't un-mark it.
+   * Shortfall accepted: the size is done as-is. This size's qty is NEVER
+   * rewritten — it keeps showing its true count in red with "(0 left)".
+   * The shortfall itself rolls into the NEXT size's qty (order total
+   * preserved), recorded as a count:0 qtyTransfer event in the placing log
+   * (replay ignores it) so Undo can revert the transfer exactly.
+   * shortOk remembers the confirmation so syncDone doesn't un-mark it.
    */
   function acceptShortfall(placed, needed) {
     var p = activeProject();
+    var shortfall = needed - placed;
     p.shortOk = p.shortOk || {};
     p.shortOk[current] = true;
+    if (shortfall > 0 && current < p.entries.length - 1) {
+      var oldQty = p.entries[current + 1].qty;
+      p.entries[current + 1].qty += shortfall;
+      p.placingEvents.push({ size: current, count: 0, t: Date.now(),
+        qtyTransfer: { idx: current + 1, delta: shortfall } });
+      // History lives on the RECEIVING size (its timeline filter shows it):
+      // its total count is the one that changed.
+      p.timeline.push({ size: current + 1, t: Date.now(),
+        text: 'changed total count from ' + oldQty + ' to ' + p.entries[current + 1].qty });
+    }
     if (p.doneSizes.indexOf(current) < 0) p.doneSizes.push(current);
     persist();
     current++;
@@ -1008,7 +1073,13 @@
         buttons: [
           {
             label: 'Yes', primary: true, onClick: function () {
+              var oldQty = p.entries[current + 1].qty;
               p.entries[current + 1].qty -= excess;
+              // recorded as a transfer event so Undo reverts it exactly
+              p.placingEvents.push({ size: current, count: 0, t: Date.now(),
+                qtyTransfer: { idx: current + 1, delta: -excess } });
+              p.timeline.push({ size: current + 1, t: Date.now(),
+                text: 'changed total count from ' + oldQty + ' to ' + p.entries[current + 1].qty });
               if (p.doneSizes.indexOf(current) < 0) p.doneSizes.push(current);
               syncDone(p);
               persist();
@@ -1032,10 +1103,12 @@
       var needed = e.qty;
       var left = Math.max(0, needed - placed);
       var doneShort = placed < needed && p.doneSizes.indexOf(i) >= 0;
+      var yHtml = (e.origQty != null && needed !== e.origQty)
+        ? '<span class="yadj">' + needed + '</span>' : String(needed);
       var html = M.prettySize(e) + ' \u2014 ' +
         (placed > needed
-          ? '<span class="over">' + placed + '</span> out of ' + needed + ' placed (' + left + ' left)'
-          : placed + ' out of ' + needed + ' placed (' + (doneShort ? 0 : left) + ' left)');
+          ? '<span class="over">' + placed + '</span> out of ' + yHtml + ' placed (' + left + ' left)'
+          : placed + ' out of ' + yHtml + ' placed (' + (doneShort ? 0 : left) + ' left)');
       return {
         html: html,
         onClick: function () { current = i; saveCurrent(); renderPlacing(); }
