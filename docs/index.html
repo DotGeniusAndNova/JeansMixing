@@ -15,7 +15,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-<link rel="stylesheet" href="css/style.css?v=web-v1.3.1">
+<link rel="stylesheet" href="css/style.css?v=web-v1.4.0">
 </head>
 <body>
 
@@ -38,6 +38,7 @@
   <div class="topbar no-print">
     <button id="entryBack">&larr;</button>
     <div class="title" id="entryProjectName"></div>
+    <button id="entryScan" class="icon-btn" aria-label="Scan sizes">&#128247;</button>
     <button id="entrySettings" class="icon-btn" aria-label="Settings">&#9881;</button>
     <button id="entryDone" class="primary">Done</button>
   </div>
@@ -325,8 +326,10 @@
 
 <div id="modalOverlay"><div id="modalBox"></div></div>
 <div id="toast"></div>
+<div id="scanOverlay" class="no-print"><div id="scanBox"><div id="scanStatus">Reading your sheet…</div><div id="scanBarWrap"><div id="scanBar"></div></div></div></div>
 
-<script src="js/model.js?v=web-v1.3.1"></script>
-<script src="js/app.js?v=web-v1.3.1"></script>
+<script src="js/model.js?v=web-v1.4.0"></script>
+<script src="js/scan-parse.js?v=web-v1.4.0"></script>
+<script src="js/app.js?v=web-v1.4.0"></script>
 </body>
 </html>

@@ -138,7 +138,21 @@ button:disabled { opacity: 0.35; }
 }
 .trow:last-child { border-bottom: none; }
 .trow.alt { background: var(--row-yellow); }
-.trow .sz { flex: 1; font-weight: bold; font-size: 1.1rem; }
+.trow.flag { background: #FFF3E0; }
+[data-theme="dark"] .trow.flag { background: #4A3200; }
+.trow .sz { flex: 1; font-weight: bold; font-size: 1.1rem; cursor: pointer; }
+.trow .flag-raw { font-weight: normal; font-size: 0.85rem; color: var(--danger); margin-top: 0.222rem; word-break: break-word; }
+.trow input.szedit {
+  width: 3.4rem; font-size: 1.2rem; text-align: center;
+  min-height: 2.4rem; border: 0.111rem solid var(--border); border-radius: 0.444rem;
+}
+.trow button.szbtn { min-height: 2.4rem; padding: 0 0.5rem; font-size: 1.1rem; }
+/* Scan progress overlay (experimental Scan feature). */
+#scanOverlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); align-items: center; justify-content: center; z-index: 100; }
+#scanOverlay.open { display: flex; }
+#scanBox { background: var(--card); color: var(--ink); padding: 1.111rem; border-radius: 0.667rem; width: 80%; max-width: 20rem; text-align: center; font-size: 1.05rem; }
+#scanBarWrap { height: 0.5rem; background: var(--border); border-radius: 0.25rem; overflow: hidden; margin-top: 0.667rem; }
+#scanBar { height: 100%; width: 0; background: var(--brand); transition: width 0.2s; }
 .trow .q { font-size: 1.1rem; min-width: 3.333rem; text-align: right; }
 .trow input.qty {
   width: 5rem; font-size: 1.2rem; text-align: center;

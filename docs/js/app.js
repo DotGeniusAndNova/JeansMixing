@@ -8,7 +8,7 @@
   var M = window.JM;
   // Single source of truth for the displayed version (Projects title).
   // Bump this with every release, alongside the ?v= cache-busters.
-  var APP_VERSION = '1.3.1';
+  var APP_VERSION = '1.4.0';
 
   function el(id) { return document.getElementById(id); }
 
@@ -361,6 +361,8 @@
     var n = p.entries.length, i = entry.index;
     el('entryCounter').textContent =
       i < n ? 'Entry ' + (i + 1) + ' of ' + n : (n === 0 ? 'Entry 1' : 'Entry ' + (n + 1) + ' (new)');
+    // Experimental Scan lives left of the gear; everyone else never sees it.
+    el('entryScan').style.display = settings.experimental ? '' : 'none';
   }
 
   function onDigit(d) {
@@ -477,6 +479,22 @@
   /* ----------------------------------------------------------------- review */
   function showReview() { renderReview(); show('review'); }
 
+  /* Size editing on the review screen (universal, not just for scans):
+     tap a size to edit its two digits in place. While a row is being
+     edited, renderReview draws the editor instead of the size text. */
+  var reviewSizeEdit = null; // {pos, waist, length} or null
+
+  /* A flagged (scanned, unparseable) row clears once it has a real
+     two-digit size and a quantity — i.e. once alex has fixed it. */
+  function maybeClearScanFlag(e) {
+    if (e.scanFlag && /^\d\d$/.test(e.waist || '') &&
+        /^\d\d$/.test(e.length || '') && e.qty > 0) {
+      delete e.scanFlag;
+      return true;
+    }
+    return false;
+  }
+
   function renderReview() {
     var p = activeProject();
     if (!p) return showProjects();
@@ -485,28 +503,117 @@
     rows.innerHTML = '';
     p.entries.forEach(function (e, pos) {
       var row = document.createElement('div');
-      row.className = 'trow' + (pos % 2 === 1 ? ' alt' : '');
+      row.className = 'trow' + (pos % 2 === 1 ? ' alt' : '') + (e.scanFlag ? ' flag' : '');
+      if (reviewSizeEdit && reviewSizeEdit.pos === pos) {
+        // In-place size editor: two 2-digit boxes + save/cancel.
+        var wIn = document.createElement('input');
+        wIn.className = 'szedit';
+        wIn.type = 'text';
+        wIn.setAttribute('inputmode', 'numeric');
+        wIn.maxLength = 2;
+        wIn.value = reviewSizeEdit.waist;
+        var x = document.createElement('div');
+        x.className = 'x';
+        x.textContent = 'x';
+        var lIn = document.createElement('input');
+        lIn.className = 'szedit';
+        lIn.type = 'text';
+        lIn.setAttribute('inputmode', 'numeric');
+        lIn.maxLength = 2;
+        lIn.value = reviewSizeEdit.length;
+        var okBtn = document.createElement('button');
+        okBtn.className = 'szbtn primary';
+        okBtn.textContent = '\u2713';
+        okBtn.setAttribute('aria-label', 'Save size');
+        var noBtn = document.createElement('button');
+        noBtn.className = 'szbtn';
+        noBtn.textContent = '\u2715';
+        noBtn.setAttribute('aria-label', 'Cancel size edit');
+        function saveSizeEdit() {
+          var w = wIn.value, l = lIn.value;
+          if (!/^\d\d$/.test(w) || !/^\d\d$/.test(l)) {
+            toast('Sizes are two digits each');
+            return;
+          }
+          for (var i = 0; i < p.entries.length; i++) {
+            if (i !== pos && p.entries[i].waist === w && p.entries[i].length === l) {
+              showModal({
+                title: 'Duplicate size',
+                message: M.displaySize(w, l) + ' is already in the list.',
+                buttons: [{ label: 'OK', primary: true }]
+              });
+              return;
+            }
+          }
+          e.waist = w;
+          e.length = l;
+          maybeClearScanFlag(e);
+          reviewSizeEdit = null;
+          persist();
+          renderReview();
+        }
+        okBtn.onclick = saveSizeEdit;
+        noBtn.onclick = function () { reviewSizeEdit = null; renderReview(); };
+        wIn.addEventListener('keydown', function (ev) {
+          if (ev.key === 'Enter') { ev.preventDefault(); lIn.focus(); }
+        });
+        lIn.addEventListener('keydown', function (ev) {
+          if (ev.key === 'Enter') { ev.preventDefault(); saveSizeEdit(); }
+        });
+        row.appendChild(wIn);
+        row.appendChild(x);
+        row.appendChild(lIn);
+        row.appendChild(okBtn);
+        row.appendChild(noBtn);
+        rows.appendChild(row);
+        return;
+      }
       var sz = document.createElement('div');
       sz.className = 'sz';
-      sz.textContent = M.displaySize(e.waist, e.length);
+      if (e.scanFlag) {
+        sz.textContent = '\u26A0 Check this row';
+        var raw = document.createElement('div');
+        raw.className = 'flag-raw';
+        raw.textContent = 'Scanned as: ' + (e.scanFlag.raw || '(unreadable)') +
+          (e.scanFlag.reason === 'duplicate' ? ' \u2014 already in the list' : '');
+        sz.appendChild(raw);
+      } else {
+        sz.textContent = M.displaySize(e.waist, e.length);
+      }
+      sz.onclick = function () {
+        reviewSizeEdit = { pos: pos, waist: e.waist, length: e.length };
+        renderReview();
+      };
       var qty = document.createElement('input');
       qty.className = 'qty';
       qty.type = 'number';
       qty.setAttribute('inputmode', 'numeric');
-      qty.min = '1';
-      qty.value = e.qty;
+      if (!e.scanFlag) qty.min = '1';
+      qty.value = (e.scanFlag && e.qty === 0) ? '' : e.qty;
       qty.addEventListener('input', function () {
         var v = parseInt(qty.value, 10);
-        if (v > 0) {
+        if (e.scanFlag) {
+          if (!isNaN(v) && v >= 0) {
+            e.qty = v;
+            if (maybeClearScanFlag(e)) { persist(); renderReview(); }
+            else { persist(); updateReviewTotal(); }
+          }
+        } else if (v > 0) {
           e.qty = v;
           persist();
           updateReviewTotal();
         }
       });
       // If they leave junk in the box, put the last good value back.
+      // A blank qty on a flagged row is fine — it still needs a quantity.
       qty.addEventListener('blur', function () {
         var v = parseInt(qty.value, 10);
-        if (!(v > 0)) qty.value = e.qty;
+        if (e.scanFlag) {
+          if (qty.value === '') return;
+          if (isNaN(v) || v < 0) qty.value = e.qty === 0 ? '' : e.qty;
+        } else if (!(v > 0)) {
+          qty.value = e.qty;
+        }
       });
       var del = document.createElement('button');
       del.className = 'danger';
@@ -515,7 +622,7 @@
       del.onclick = function () {
         showModal({
           title: 'Delete size?',
-          message: 'Delete ' + M.displaySize(e.waist, e.length) + ' from the list?',
+          message: 'Delete ' + (e.scanFlag ? 'scanned row "' + (e.scanFlag.raw || '') + '"' : M.displaySize(e.waist, e.length)) + ' from the list?',
           rowButtons: true,
           buttons: [
             {
@@ -540,13 +647,25 @@
   function updateReviewTotal() {
     var p = activeProject();
     var total = p.entries.reduce(function (s, e) { return s + e.qty; }, 0);
-    el('reviewTotal').textContent = 'Total: ' + total + ' pairs';
+    var flagged = p.entries.filter(function (e) { return e.scanFlag; }).length;
+    el('reviewTotal').textContent = 'Total: ' + total + ' pairs' +
+      (flagged ? ' \u2014 ' + flagged + ' row' + (flagged === 1 ? '' : 's') + ' need attention' : '');
   }
 
   function onConfirm() {
     var p = activeProject();
     if (p.entries.length === 0) {
       toast('Nothing to confirm \u2014 the list is empty');
+      return;
+    }
+    var flagged = p.entries.filter(function (e) { return e.scanFlag; }).length;
+    if (flagged) {
+      showModal({
+        title: 'Rows need attention',
+        message: flagged + ' scanned row' + (flagged === 1 ? ' still needs' : 's still need') +
+          ' a fix. Tap a flagged row to correct it, or delete it, then confirm.',
+        buttons: [{ label: 'OK', primary: true }]
+      });
       return;
     }
     var total = p.entries.reduce(function (s, e) { return s + e.qty; }, 0);
@@ -582,6 +701,251 @@
         { label: 'No' }
       ]
     });
+  }
+
+  /* ------------------------------------------------------------------- scan
+   * Experimental input method for regular pull: photograph the printed
+   * work sheet and let Tesseract.js (open source, runs on-device) read the
+   * size rows into the review screen. The photo is never stored anywhere:
+   * it lives as a canvas in memory during the scan and is dropped right
+   * after parsing, so nothing lands in the phone's photo gallery either.
+   * Tesseract itself loads on demand from its CDN the first time Scan is
+   * tapped, so the normal app stays dependency-free; later scans reuse
+   * the cached library and worker. */
+  var scanLibPromise = null, scanWorker = null, scanInputs = null, scanPages = [];
+
+  function showScan(text, pct) {
+    el('scanStatus').textContent = text;
+    el('scanBar').style.width = (pct || 0) + '%';
+    el('scanOverlay').classList.add('open');
+  }
+  function hideScan() { el('scanOverlay').classList.remove('open'); }
+
+  function ensureScanLib() {
+    if (window.Tesseract) return Promise.resolve();
+    if (scanLibPromise) return scanLibPromise;
+    scanLibPromise = new Promise(function (resolve, reject) {
+      var s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@6/dist/tesseract.min.js';
+      s.onload = function () { resolve(); };
+      s.onerror = function () { scanLibPromise = null; reject(new Error('tesseract load failed')); };
+      document.body.appendChild(s);
+    });
+    return scanLibPromise;
+  }
+
+  function onScanTap() {
+    if (!settings.experimental) return; // belt and braces: button hides too
+    if (!window.ScanParse) {
+      toast('Scanner is not loaded \u2014 reload the app and try again');
+      return;
+    }
+    scanPages = []; // fresh session; earlier pages are discarded with it
+    showScanChooser();
+  }
+
+  function showScanChooser() {
+    showModal({
+      title: 'Scan sizes',
+      message: 'Take a photo of one page of the printed sheet, or choose photos. ' +
+        'You can add more pages after each scan. ' +
+        'Photos are read on this phone and discarded right after \u2014 nothing is saved or uploaded.',
+      buttons: [
+        { label: 'Take photo', primary: true, onClick: function () { pickScanFile(true); } },
+        { label: 'Choose photo', onClick: function () { pickScanFile(false); } },
+        { label: 'Cancel' }
+      ]
+    });
+  }
+
+  function pickScanFile(useCamera) {
+    if (!scanInputs) {
+      scanInputs = {};
+      [true, false].forEach(function (cam) {
+        var inp = document.createElement('input');
+        inp.type = 'file';
+        inp.accept = 'image/*';
+        if (cam) inp.setAttribute('capture', 'environment');
+        else inp.multiple = true; // one upload may cover several pages at once
+        inp.style.display = 'none';
+        inp.addEventListener('change', function () {
+          var files = [];
+          for (var i = 0; i < (inp.files || []).length; i++) files.push(inp.files[i]);
+          inp.value = '';
+          if (files.length) handleScanFiles(files);
+        });
+        document.body.appendChild(inp);
+        scanInputs[cam ? 'camera' : 'file'] = inp;
+      });
+    }
+    scanInputs[useCamera ? 'camera' : 'file'].click();
+  }
+
+  /* Shrink the photo before OCR: faster, less memory, and plenty of
+     resolution left for big printed digits. */
+  function downscaleImage(file) {
+    return new Promise(function (resolve, reject) {
+      var img = new Image();
+      var url = URL.createObjectURL(file);
+      img.onload = function () {
+        URL.revokeObjectURL(url);
+        var max = 2200, w = img.naturalWidth, h = img.naturalHeight;
+        var scale = Math.min(1, max / Math.max(w, h));
+        var cv = document.createElement('canvas');
+        cv.width = Math.max(1, Math.round(w * scale));
+        cv.height = Math.max(1, Math.round(h * scale));
+        cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+        resolve(cv);
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('bad image')); };
+      img.src = url;
+    });
+  }
+
+  function runScan(canvas, label) {
+    showScan('Loading text reader…', 0);
+    function recognize() { return scanWorker.recognize(canvas); }
+    if (scanWorker) return recognize();
+    return ensureScanLib().then(function () {
+      return window.Tesseract.createWorker('eng', 1, {
+        logger: function (m) {
+          if (m.status === 'recognizing text') {
+            showScan(label + ' ' + Math.round((m.progress || 0) * 100) + '%', Math.round((m.progress || 0) * 100));
+          } else {
+            showScan('Loading text reader…', 0);
+          }
+        }
+      });
+    }).then(function (w) {
+      scanWorker = w;
+      return recognize();
+    });
+  }
+
+  /* Scan one or more photos in order (a camera capture is always one; an
+     upload may select several pages at once). Pages accumulate in
+     scanPages until alex reviews them, so a two-page sheet becomes one
+     list. A failed photo keeps the pages already scanned. */
+  function handleScanFiles(files) {
+    if (!files.length) return;
+    if (!window.ScanParse) {
+      toast('Scanner is not loaded \u2014 reload the app and try again');
+      return;
+    }
+    showScan('Preparing photo…', 0);
+    var chain = Promise.resolve();
+    files.forEach(function (file, idx) {
+      chain = chain.then(function () {
+        if (!file.type || file.type.indexOf('image/') !== 0) {
+          throw new Error('not an image');
+        }
+        showScan('Preparing photo…', 0);
+        return downscaleImage(file).then(function (canvas) {
+          var label = files.length === 1 ? 'Reading your sheet'
+            : 'Reading page ' + (idx + 1) + ' of ' + files.length;
+          return runScan(canvas, label);
+        }).then(function (result) {
+          // The file, canvas and OCR result go out of scope here: discarded.
+          scanPages.push(window.ScanParse.parseScanResult(result.data || {}));
+        });
+      });
+    });
+    chain.then(function () {
+      hideScan();
+      showPageModal();
+    }).catch(function () {
+      hideScan();
+      if (scanWorker) {
+        try { scanWorker.terminate(); } catch (e) {}
+        scanWorker = null;
+      }
+      showModal({
+        title: 'Scan failed',
+        message: 'Could not read that photo. The first scan needs an internet ' +
+          'connection (to download the text reader), and a clear, straight ' +
+          'photo of the printed sheet works best.',
+        buttons: [{
+          label: 'OK', primary: true, onClick: function () {
+            if (scanPages.length) { showPageModal(); return false; }
+          }
+        }]
+      });
+    });
+  }
+
+  /* Between pages: running totals plus the choice to add another page,
+     review what is scanned so far, or drop the whole session. */
+  function showPageModal() {
+    var merged = window.ScanParse.mergeScanResults(scanPages);
+    var rows = merged.rows || [];
+    var ok = rows.filter(function (r) { return !r.flag; }).length;
+    var bad = rows.length - ok;
+    showModal({
+      title: 'Scanned so far',
+      message: ok + ' sizes found' + (bad ? ', ' + bad + ' row' + (bad === 1 ? '' : 's') + ' need attention' : '') +
+        '. You can scan another page or review the list.',
+      buttons: [
+        // importScan returns true when it opened its own modal (which the
+        // auto-close must not kill) and false when it navigated to review.
+        { label: 'Review sizes', primary: true, onClick: function () { return importScan(merged) ? false : undefined; } },
+        { label: 'Scan another page', onClick: function () { showScanChooser(); return false; } },
+        { label: 'Cancel scan', onClick: function () { scanPages = []; } }
+      ]
+    });
+  }
+
+  /* Scanned rows land on the regular review screen, in paper order.
+     Unreadable and duplicate rows become flagged entries (empty size,
+     qty 0) that alex fixes with the new size editing or deletes; Confirm
+     refuses while any flagged row remains.
+     Returns true when a modal was opened (the caller must not auto-close
+     it) and false when it navigated straight to the review screen. */
+  function importScan(parsed) {
+    var p = activeProject();
+    if (!p || p.locked) return false;
+    var rows = parsed.rows || [];
+    var ok = rows.filter(function (r) { return !r.flag; }).length;
+    var bad = rows.length - ok;
+    if (rows.length === 0) {
+      showModal({
+        title: 'Nothing found',
+        message: 'No size rows were found in that photo. Try a clearer, straighter photo of the printed sheet.',
+        buttons: [{ label: 'OK', primary: true }]
+      });
+      return true;
+    }
+    function doImport() {
+      p.entries = rows.map(function (r) {
+        if (r.flag) {
+          return { waist: '', length: '', qty: 0, scanFlag: { raw: r.raw, reason: r.flag } };
+        }
+        return { waist: r.waist, length: r.length, qty: r.qty };
+      });
+      p.entryDraft = null;
+      entry = null;
+      persist();
+      showReview();
+      if (bad > 0) {
+        toast('Scanned ' + ok + ' sizes \u2014 ' + bad + ' row' + (bad === 1 ? '' : 's') + ' need attention');
+      } else {
+        toast('Scanned ' + ok + ' sizes \u2014 check them over');
+      }
+    }
+    if (p.entries.length > 0) {
+      showModal({
+        title: 'Replace sizes?',
+        message: 'This project already has ' + p.entries.length + ' sizes. Replace them with the scanned list?',
+        rowButtons: true,
+        buttons: [
+          { label: 'Replace', primary: true, onClick: doImport },
+          { label: 'Cancel' }
+        ]
+      });
+      return true;
+    } else {
+      doImport();
+      return false;
+    }
   }
 
   /* ----------------------------------------------------------------- locked */
@@ -2224,6 +2588,7 @@
     el('projectsSettings').onclick = function () { settingsReturn = 'projects'; showSettings('defaults'); };
     // entry
     el('entryBack').onclick = function () { saveDraft(); showProjects(); };
+    el('entryScan').onclick = onScanTap;
     el('entrySettings').onclick = function () { saveDraft(); settingsReturn = 'entry'; showSettings('project', activeProject()); };
     // settings from anywhere: project mode (read-only after lock), back where you came from
     el('reviewSettings').onclick = function () { settingsReturn = 'review'; showSettings('project', activeProject()); };
