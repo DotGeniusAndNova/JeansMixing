@@ -8,7 +8,7 @@
   var M = window.JM;
   // Single source of truth for the displayed version (Projects title).
   // Bump this with every release, alongside the ?v= cache-busters.
-  var APP_VERSION = '1.4.0';
+  var APP_VERSION = '1.5.0';
 
   function el(id) { return document.getElementById(id); }
 
@@ -1645,6 +1645,106 @@
     var w = el('installWrap');
     if (w) w.style.display = isStandalone() ? 'none' : '';
   }
+
+  /* Check for updates, same pattern as Pantser's Info-screen button: read
+     the live version straight from the served app.js (cache-busted, so the
+     answer is about the server, not this device), pull a new service
+     worker if there is one, and offer a restart when an update is ready.
+     States live in updState so re-rendering Settings never loses them. */
+  var updState = 'idle'; // 'idle' | 'checking' | 'ready'
+  var updLatest = null;
+
+  function renderUpdate() {
+    var btn = el('checkUpdatesBtn'), st = el('updateStatus');
+    if (!btn) return;
+    if (updState === 'checking') {
+      btn.disabled = true;
+      btn.textContent = 'Checking\u2026';
+    } else if (updState === 'ready') {
+      btn.disabled = false;
+      btn.textContent = 'Restart to update';
+      if (st) st.textContent = 'Update available' + (updLatest ? ' (v' + updLatest + ')' : '');
+    } else {
+      btn.disabled = false;
+      btn.textContent = 'Check for updates';
+    }
+  }
+
+  function checkForUpdates() {
+    var st = el('updateStatus');
+    var nav = (typeof navigator !== 'undefined') ? navigator : {};
+    if (!('serviceWorker' in nav)) {
+      if (st) st.textContent = 'Update checking isn\u2019t available here.';
+      return;
+    }
+    updState = 'checking';
+    renderUpdate();
+    if (st) st.textContent = '';
+    var netFailed = false;
+    nav.serviceWorker.getRegistration().then(function (reg) {
+      if (!reg) throw new Error('no registration');
+      return fetch('js/app.js?u=' + Date.now(), { cache: 'no-store' }).then(function (res) {
+        if (res && res.ok) {
+          return res.text().then(function (txt) {
+            var m = txt.match(/APP_VERSION = '([^']+)'/);
+            return { reg: reg, latest: m ? m[1] : null };
+          });
+        }
+        netFailed = true;
+        return { reg: reg, latest: null };
+      }).catch(function () {
+        netFailed = true;
+        return { reg: reg, latest: null };
+      }).then(function (r) {
+        return r.reg.update().then(function () { return r; });
+      });
+    }).then(function (r) {
+      /* If a new worker appeared, wait until it has installed (it then
+         activates itself) so the restart lands on the new version. */
+      var w = r.reg.installing || r.reg.waiting;
+      function finish() {
+        if ((r.latest && r.latest !== APP_VERSION) || w) {
+          updLatest = r.latest;
+          updState = 'ready';
+          renderUpdate();
+        } else if (netFailed) {
+          updState = 'idle';
+          renderUpdate();
+          if (st) st.textContent = 'Couldn\u2019t check for updates.';
+        } else {
+          updState = 'idle';
+          renderUpdate();
+          if (st) st.textContent = 'You\u2019re up to date (v' + APP_VERSION + ')';
+        }
+      }
+      if (w && w.state !== 'installed' && w.state !== 'activated') {
+        var done = false;
+        var to = setTimeout(function () { if (!done) { done = true; finish(); } }, 8000);
+        w.addEventListener('statechange', function () {
+          if (!done && (w.state === 'installed' || w.state === 'activated')) {
+            done = true; clearTimeout(to); finish();
+          }
+        });
+        if (w.state === 'installed' || w.state === 'activated') {
+          done = true; clearTimeout(to); finish();
+        }
+      } else {
+        finish();
+      }
+    }).catch(function () {
+      updState = 'idle';
+      renderUpdate();
+      if (st) st.textContent = 'Couldn\u2019t check for updates.';
+    });
+  }
+
+  function onUpdateButton() {
+    if (updState === 'ready') {
+      try { location.reload(); } catch (e) {}
+      return;
+    }
+    if (updState !== 'checking') checkForUpdates();
+  }
   function onInstallApp() {
     if (installPromptEvt) {
       installPromptEvt.prompt();
@@ -1706,6 +1806,7 @@
       (rp.entries || []).length > 0 &&
       (rp.doneSizes || []).length >= rp.entries.length;
     el('resetProjectWrap').style.display = finished ? '' : 'none';
+    renderUpdate();
   }
   function onResetProject() {
     showModal({
@@ -2700,6 +2801,7 @@
       toast(settings.experimental ? 'Experimental features on' : 'Experimental features off');
     };
     el('installAppBtn').onclick = onInstallApp;
+    el('checkUpdatesBtn').onclick = onUpdateButton;
     window.addEventListener('beforeinstallprompt', function (e) {
       e.preventDefault();
       installPromptEvt = e;

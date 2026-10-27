@@ -15,7 +15,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-<link rel="stylesheet" href="css/style.css?v=web-v1.4.0">
+<link rel="stylesheet" href="css/style.css?v=web-v1.5.0">
 </head>
 <body>
 
@@ -217,6 +217,10 @@
     <button id="installAppBtn">Install app</button>
     <div class="sub" id="installAppNote" style="margin-top:0.25rem">Add it to your home screen for offline use, no browser bar.</div>
   </div>
+  <div class="btn-col no-print" id="updateWrap" style="margin-top:1.111rem">
+    <button id="checkUpdatesBtn">Check for updates</button>
+    <div class="sub" id="updateStatus" style="margin-top:0.25rem"></div>
+  </div>
   <div class="btn-col no-print" id="resetProjectWrap" style="margin-top:1.111rem; display:none">
     <button id="resetProjectBtn" class="danger">Reset project</button>
     <div class="sub" style="margin-top:0.25rem">Clears all placing progress. The size list stays, and it stays locked.</div>
@@ -328,8 +332,8 @@
 <div id="toast"></div>
 <div id="scanOverlay" class="no-print"><div id="scanBox"><div id="scanStatus">Reading your sheet…</div><div id="scanBarWrap"><div id="scanBar"></div></div></div></div>
 
-<script src="js/model.js?v=web-v1.4.0"></script>
-<script src="js/scan-parse.js?v=web-v1.4.0"></script>
-<script src="js/app.js?v=web-v1.4.0"></script>
+<script src="js/model.js?v=web-v1.5.0"></script>
+<script src="js/scan-parse.js?v=web-v1.5.0"></script>
+<script src="js/app.js?v=web-v1.5.0"></script>
 </body>
 </html>
