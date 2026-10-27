@@ -742,37 +742,100 @@
     return scanLibPromise;
   }
 
-  /* Manual corner crop: OpenCV.js loads on demand the first time a photo
-     is cropped (same pattern as the text reader). The warp itself is the
-     standard getPerspectiveTransform + warpPerspective; the corners come
-     from alex's four dots, NOT from auto-detection, which guessed the
-     wrong rectangle on both of his real photos. Any load or warp failure
-     resolves to the original photo, so cropping can never break a scan. */
-  var cropLibPromise = null;
-  function ensureCropLib() {
-    if (window.cv && window.cv.Mat) return Promise.resolve(window.cv);
-    if (cropLibPromise) return cropLibPromise;
-    cropLibPromise = new Promise(function (resolve, reject) {
+  /* Manual corner crop: OpenCV.js loads on demand (same pattern as the
+     text reader). The warp itself is the standard getPerspectiveTransform
+     + warpPerspective; the corners come from alex's four dots, NOT from
+     auto-detection, which guessed the wrong rectangle on both of his real
+     photos. Any load or warp failure resolves to the original photo, so
+     cropping can never break a scan.
+     The download is metered: jsDelivr (the same CDN the text reader
+     already uses) allows the page to count bytes, while the old docs host
+     sends no CORS header and cannot be metered. The metered fetch runs
+     through a Blob URL, which is safe here because this build embeds its
+     WASM as a data URI (no separate .wasm fetch to break). If metering
+     fails, it falls back to a plain script tag from the docs host. */
+  var cropLibPromise = null, cropLibLoaded = false;
+  var cropLoadTotal = 0, cropLoadDone = 0;
+  function cropLoadStatusText() {
+    function mb(n) { return (n / 1048576).toFixed(1) + ' MB'; }
+    if (cropLoadTotal > 0) return 'Downloading straightener… ' + mb(cropLoadDone) + ' / ' + mb(cropLoadTotal) +
+      ' (' + Math.round(cropLoadDone / cropLoadTotal * 100) + '%)';
+    if (cropLoadDone > 0) return 'Downloading straightener… ' + mb(cropLoadDone);
+    return 'Loading straightener…';
+  }
+  function cropUpdateLoadLine() {
+    var line = el('cropLoadStatus');
+    if (!line) return;
+    if (cropLibLoaded || !cropLibPromise) { line.style.display = 'none'; return; }
+    line.textContent = cropLoadStatusText();
+    line.style.display = 'block';
+  }
+  function loadCropLibScript(src) {
+    return new Promise(function (resolve, reject) {
       var s = document.createElement('script');
-      s.src = 'https://docs.opencv.org/4.7.0/opencv.js';
       var done = false;
       var timer = setTimeout(function () {
-        if (!done) { done = true; cropLibPromise = null; reject(new Error('opencv load timeout')); }
-      }, 30000);
+        if (!done) { done = true; reject(new Error('opencv load timeout')); }
+      }, 60000);
       s.onload = function () {
         var cv = window.cv;
         if (cv && cv.Mat) { done = true; clearTimeout(timer); resolve(cv); }
         else if (cv) cv['onRuntimeInitialized'] = function () {
           if (!done) { done = true; clearTimeout(timer); resolve(window.cv); }
         };
-        else { done = true; clearTimeout(timer); cropLibPromise = null; reject(new Error('opencv missing')); }
+        else { done = true; clearTimeout(timer); reject(new Error('opencv missing')); }
       };
       s.onerror = function () {
-        if (!done) { done = true; clearTimeout(timer); cropLibPromise = null; reject(new Error('opencv load failed')); }
+        if (!done) { done = true; clearTimeout(timer); reject(new Error('opencv load failed')); }
       };
+      s.src = src;
       document.body.appendChild(s);
     });
+  }
+  function loadCropLibMetered() {
+    return fetch('https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.7.0-release.1/dist/opencv.js').then(function (resp) {
+      if (!resp.ok || !resp.body) throw new Error('metered fetch unavailable');
+      cropLoadTotal = parseInt(resp.headers.get('content-length') || '0', 10) || 0;
+      cropLoadDone = 0; cropUpdateLoadLine();
+      var reader = resp.body.getReader();
+      var chunks = [];
+      function pump() {
+        return reader.read().then(function (r) {
+          if (r.done) {
+            var url = URL.createObjectURL(new Blob(chunks, { type: 'text/javascript' }));
+            return loadCropLibScript(url).then(function (cv) {
+              URL.revokeObjectURL(url);
+              return cv;
+            }, function (e) { URL.revokeObjectURL(url); throw e; });
+          }
+          chunks.push(r.value);
+          cropLoadDone += r.value.byteLength;
+          cropUpdateLoadLine();
+          return pump();
+        });
+      }
+      return pump();
+    });
+  }
+  function ensureCropLib() {
+    if (window.cv && window.cv.Mat) { cropLibLoaded = true; return Promise.resolve(window.cv); }
+    if (cropLibPromise) return cropLibPromise;
+    cropLibPromise = loadCropLibMetered().catch(function () {
+      return loadCropLibScript('https://docs.opencv.org/4.7.0/opencv.js');
+    }).then(function (cv) {
+      cropLibLoaded = true; cropUpdateLoadLine();
+      return cv;
+    }, function (err) {
+      cropLibPromise = null; cropLibLoaded = false; cropUpdateLoadLine();
+      throw err;
+    });
     return cropLibPromise;
+  }
+  /* Start the download early (Scan chooser, crop screen) so it overlaps
+     the time alex spends picking and placing — the wait at Straighten is
+     then usually zero. Failures are swallowed here; Straighten retries. */
+  function preloadCropLib() {
+    try { ensureCropLib().catch(function () {}); } catch (e) {}
   }
 
   /* Warp the quad (corners in SOURCE canvas coords, order TL, TR, BR, BL)
@@ -830,6 +893,40 @@
       h.style.left = c.x + 'px'; h.style.top = c.y + 'px';
     });
   }
+  /* Drag magnifier: a loupe above the finger showing the full-resolution
+     photo around the held dot at 4x with smoothing off (discrete pixels)
+     and a crosshair exactly on the point. Shown only while a dot is held;
+     hidden the moment the drag ends or the mode changes. */
+  var MAG_SIZE = 132, MAG_ZOOM = 4;
+  function cropShowMag(fingerX, fingerY) {
+    var st = cropState; if (!st || st.mode !== 'edit' || st.drag === null || st.drag === undefined) return;
+    var canvas = el('cropCanvas');
+    var fx = st.src.width / canvas.width, fy = st.src.height / canvas.height;
+    var pt = st.corners[st.drag];
+    var sx = pt.x * fx, sy = pt.y * fy;
+    var half = MAG_SIZE / MAG_ZOOM / 2;
+    half = Math.min(half, st.src.width / 2, st.src.height / 2);
+    var ox = Math.max(0, Math.min(st.src.width - half * 2, sx - half));
+    var oy = Math.max(0, Math.min(st.src.height - half * 2, sy - half));
+    var m = el('cropMagCanvas').getContext('2d');
+    m.imageSmoothingEnabled = false;
+    m.drawImage(st.src, ox, oy, half * 2, half * 2, 0, 0, MAG_SIZE, MAG_SIZE);
+    var cx = (sx - ox) * MAG_ZOOM, cy = (sy - oy) * MAG_ZOOM;
+    m.strokeStyle = '#E53935'; m.lineWidth = 2;
+    m.beginPath();
+    m.moveTo(cx, 0); m.lineTo(cx, MAG_SIZE);
+    m.moveTo(0, cy); m.lineTo(MAG_SIZE, cy);
+    m.stroke();
+    var mag = el('cropMag');
+    var stage = el('cropStage');
+    mag.style.left = Math.max(0, Math.min(stage.clientWidth - MAG_SIZE, fingerX - MAG_SIZE / 2)) + 'px';
+    var top;
+    if (fingerY - MAG_SIZE - 16 >= 0) top = fingerY - MAG_SIZE - 16;
+    else top = Math.min(stage.clientHeight - MAG_SIZE, fingerY + 24);
+    mag.style.top = Math.max(0, top) + 'px';
+    mag.style.display = 'block';
+  }
+  function cropHideMag() { el('cropMag').style.display = 'none'; }
   function cropSetMode(mode) {
     var st = cropState; if (!st) return;
     st.mode = mode;
@@ -838,8 +935,9 @@
     for (var i = 0; i < 4; i++) el('cropHandle' + i).style.display = mode === 'edit' ? 'block' : 'none';
     el('cropTitle').textContent = mode === 'edit' ? 'Place the corners on the sheet' : 'Straightened preview';
     el('cropHint').textContent = mode === 'edit'
-      ? 'Drag the four dots onto the corners of the sheet, then Straighten.'
+      ? 'Drag the four dots onto the corners of the sheet, then Straighten. Hold a dot to see it magnified.'
       : 'Scan this straightened page, or go back and adjust the corners.';
+    if (mode !== 'edit') cropHideMag();
     ['cropStraighten', 'cropSkipEdit', 'cropScanThis', 'cropAdjust', 'cropSkipPreview'].forEach(function (id) {
       el(id).disabled = false;
     });
@@ -879,6 +977,7 @@
         e.preventDefault();
         try { h.setPointerCapture(e.pointerId); } catch (err) {}
         cropState.drag = idx;
+        cropShowMag(cropState.corners[idx].x, cropState.corners[idx].y);
       });
       h.addEventListener('pointermove', function (e) {
         var st = cropState;
@@ -887,9 +986,9 @@
         var x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
         var y = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
         st.corners[idx] = { x: x, y: y };
-        cropPlaceHandles(); cropDrawEdit();
+        cropPlaceHandles(); cropDrawEdit(); cropShowMag(x, y);
       });
-      function endDrag() { if (cropState) cropState.drag = null; }
+      function endDrag() { if (cropState) cropState.drag = null; cropHideMag(); }
       h.addEventListener('pointerup', endDrag);
       h.addEventListener('pointercancel', endDrag);
     })(i);
@@ -932,6 +1031,9 @@
                   { x: fit.w - iw, y: fit.h - ih }, { x: iw, y: fit.h - ih }]
       };
       cropPlaceHandles(); cropDrawEdit(); cropSetMode('edit');
+      // Show the download progress at once if the straightener is still
+      // on its way (preloaded from the Scan chooser).
+      preloadCropLib(); cropUpdateLoadLine();
     });
   }
 
@@ -946,6 +1048,7 @@
   }
 
   function showScanChooser() {
+    preloadCropLib();
     showModal({
       title: 'Scan sizes',
       message: 'Take a photo of one page of the printed sheet, or choose photos. ' +
