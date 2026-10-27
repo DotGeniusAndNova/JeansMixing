@@ -8,7 +8,7 @@
   var M = window.JM;
   // Single source of truth for the displayed version (Projects title).
   // Bump this with every release, alongside the ?v= cache-busters.
-  var APP_VERSION = '1.6.0';
+  var APP_VERSION = '1.7.0';
 
   function el(id) { return document.getElementById(id); }
 
@@ -742,6 +742,199 @@
     return scanLibPromise;
   }
 
+  /* Manual corner crop: OpenCV.js loads on demand the first time a photo
+     is cropped (same pattern as the text reader). The warp itself is the
+     standard getPerspectiveTransform + warpPerspective; the corners come
+     from alex's four dots, NOT from auto-detection, which guessed the
+     wrong rectangle on both of his real photos. Any load or warp failure
+     resolves to the original photo, so cropping can never break a scan. */
+  var cropLibPromise = null;
+  function ensureCropLib() {
+    if (window.cv && window.cv.Mat) return Promise.resolve(window.cv);
+    if (cropLibPromise) return cropLibPromise;
+    cropLibPromise = new Promise(function (resolve, reject) {
+      var s = document.createElement('script');
+      s.src = 'https://docs.opencv.org/4.7.0/opencv.js';
+      var done = false;
+      var timer = setTimeout(function () {
+        if (!done) { done = true; cropLibPromise = null; reject(new Error('opencv load timeout')); }
+      }, 30000);
+      s.onload = function () {
+        var cv = window.cv;
+        if (cv && cv.Mat) { done = true; clearTimeout(timer); resolve(cv); }
+        else if (cv) cv['onRuntimeInitialized'] = function () {
+          if (!done) { done = true; clearTimeout(timer); resolve(window.cv); }
+        };
+        else { done = true; clearTimeout(timer); cropLibPromise = null; reject(new Error('opencv missing')); }
+      };
+      s.onerror = function () {
+        if (!done) { done = true; clearTimeout(timer); cropLibPromise = null; reject(new Error('opencv load failed')); }
+      };
+      document.body.appendChild(s);
+    });
+    return cropLibPromise;
+  }
+
+  /* Warp the quad (corners in SOURCE canvas coords, order TL, TR, BR, BL)
+     into a straight rectangle. Output size comes from the quad's own
+     edge lengths, capped like the downscale step. */
+  function warpQuad(srcCanvas, corners) {
+    return ensureCropLib().then(function (cv) {
+      var wTop = Math.hypot(corners[1].x - corners[0].x, corners[1].y - corners[0].y);
+      var wBot = Math.hypot(corners[2].x - corners[3].x, corners[2].y - corners[3].y);
+      var hLeft = Math.hypot(corners[3].x - corners[0].x, corners[3].y - corners[0].y);
+      var hRight = Math.hypot(corners[2].x - corners[1].x, corners[2].y - corners[1].y);
+      var w = Math.max(1, Math.round(Math.max(wTop, wBot)));
+      var h = Math.max(1, Math.round(Math.max(hLeft, hRight)));
+      var scale = Math.min(1, 2200 / Math.max(w, h));
+      w = Math.max(1, Math.round(w * scale)); h = Math.max(1, Math.round(h * scale));
+      var src = cv.imread(srcCanvas);
+      var srcTri = cv.matFromArray(4, 1, cv.CV_32FC2,
+        [corners[0].x, corners[0].y, corners[1].x, corners[1].y,
+         corners[2].x, corners[2].y, corners[3].x, corners[3].y]);
+      var dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, w, 0, w, h, 0, h]);
+      var M = cv.getPerspectiveTransform(srcTri, dstTri);
+      var dst = new cv.Mat();
+      cv.warpPerspective(src, dst, M, new cv.Size(w, h));
+      var out = document.createElement('canvas');
+      out.width = w; out.height = h;
+      cv.imshow(out, dst);
+      src.delete(); dst.delete(); srcTri.delete(); dstTri.delete(); M.delete();
+      return out;
+    });
+  }
+
+  /* Crop controller: one session at a time, wired once. Corners live in
+     display coords (the canvas is sized so CSS px == canvas px); the
+     warp converts them to source coords. */
+  var cropState = null, cropWired = false;
+  function cropFit(srcW, srcH) {
+    var stageW = el('cropStage').clientWidth || 320;
+    var maxH = window.innerHeight * 0.62;
+    var scale = Math.min(1, stageW / srcW, maxH / srcH);
+    return { w: Math.max(1, Math.round(srcW * scale)), h: Math.max(1, Math.round(srcH * scale)) };
+  }
+  function cropDrawEdit() {
+    var st = cropState; if (!st) return;
+    var canvas = el('cropCanvas'), ctx = canvas.getContext('2d');
+    ctx.drawImage(st.off, 0, 0);
+    ctx.beginPath();
+    st.corners.forEach(function (c, i) { if (i === 0) ctx.moveTo(c.x, c.y); else ctx.lineTo(c.x, c.y); });
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(57,73,171,0.15)'; ctx.fill();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.stroke();
+  }
+  function cropPlaceHandles() {
+    cropState.corners.forEach(function (c, i) {
+      var h = el('cropHandle' + i);
+      h.style.left = c.x + 'px'; h.style.top = c.y + 'px';
+    });
+  }
+  function cropSetMode(mode) {
+    var st = cropState; if (!st) return;
+    st.mode = mode;
+    el('cropBtnsEdit').style.display = mode === 'edit' ? 'flex' : 'none';
+    el('cropBtnsPreview').style.display = mode === 'preview' ? 'flex' : 'none';
+    for (var i = 0; i < 4; i++) el('cropHandle' + i).style.display = mode === 'edit' ? 'block' : 'none';
+    el('cropTitle').textContent = mode === 'edit' ? 'Place the corners on the sheet' : 'Straightened preview';
+    el('cropHint').textContent = mode === 'edit'
+      ? 'Drag the four dots onto the corners of the sheet, then Straighten.'
+      : 'Scan this straightened page, or go back and adjust the corners.';
+    ['cropStraighten', 'cropSkipEdit', 'cropScanThis', 'cropAdjust', 'cropSkipPreview'].forEach(function (id) {
+      el(id).disabled = false;
+    });
+  }
+  function cropFinish(canvas) {
+    var resolve = cropState ? cropState.resolve : null;
+    cropState = null;
+    el('cropOverlay').classList.remove('open');
+    if (resolve) resolve(canvas);
+  }
+  function cropStraighten() {
+    var st = cropState; if (!st) return;
+    el('cropTitle').textContent = 'Straightening…';
+    ['cropStraighten', 'cropSkipEdit'].forEach(function (id) { el(id).disabled = true; });
+    var canvas = el('cropCanvas');
+    var fx = st.src.width / canvas.width, fy = st.src.height / canvas.height;
+    var srcCorners = st.corners.map(function (c) { return { x: c.x * fx, y: c.y * fy }; });
+    warpQuad(st.src, srcCorners).then(function (warped) {
+      if (!cropState) return; // user skipped while warping; that finish wins
+      st.warped = warped;
+      var fit = cropFit(warped.width, warped.height);
+      canvas.width = fit.w; canvas.height = fit.h;
+      canvas.style.width = fit.w + 'px'; canvas.style.height = fit.h + 'px';
+      canvas.getContext('2d').drawImage(warped, 0, 0, fit.w, fit.h);
+      cropSetMode('preview');
+    }).catch(function () {
+      if (!cropState) return;
+      toast('Straightener could not load — scanning the original instead');
+      cropFinish(st.src);
+    });
+  }
+  function wireCrop() {
+    for (var i = 0; i < 4; i++) (function (idx) {
+      var h = el('cropHandle' + idx);
+      h.addEventListener('pointerdown', function (e) {
+        if (!cropState || cropState.mode !== 'edit') return;
+        e.preventDefault();
+        try { h.setPointerCapture(e.pointerId); } catch (err) {}
+        cropState.drag = idx;
+      });
+      h.addEventListener('pointermove', function (e) {
+        var st = cropState;
+        if (!st || st.drag !== idx) return;
+        var rect = el('cropCanvas').getBoundingClientRect();
+        var x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+        var y = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
+        st.corners[idx] = { x: x, y: y };
+        cropPlaceHandles(); cropDrawEdit();
+      });
+      function endDrag() { if (cropState) cropState.drag = null; }
+      h.addEventListener('pointerup', endDrag);
+      h.addEventListener('pointercancel', endDrag);
+    })(i);
+    el('cropStraighten').addEventListener('click', cropStraighten);
+    el('cropScanThis').addEventListener('click', function () {
+      if (cropState && cropState.warped) cropFinish(cropState.warped);
+    });
+    el('cropAdjust').addEventListener('click', function () {
+      if (!cropState) return;
+      var canvas = el('cropCanvas');
+      canvas.width = cropState.off.width; canvas.height = cropState.off.height;
+      canvas.style.width = cropState.off.width + 'px'; canvas.style.height = cropState.off.height + 'px';
+      cropPlaceHandles(); cropDrawEdit(); cropSetMode('edit');
+    });
+    el('cropSkipEdit').addEventListener('click', function () { if (cropState) cropFinish(cropState.src); });
+    el('cropSkipPreview').addEventListener('click', function () { if (cropState) cropFinish(cropState.src); });
+  }
+
+  /* Show the crop screen for one photo; resolves to the canvas to scan:
+     the warped image, or the original when skipped / straightening fails.
+     The photo itself is never stored — only canvases in memory. */
+  function cropStep(srcCanvas) {
+    if (cropState) return Promise.resolve(srcCanvas);
+    return new Promise(function (resolve) {
+      if (!cropWired) { wireCrop(); cropWired = true; }
+      hideScan();
+      el('cropOverlay').classList.add('open');
+      // Open first: the stage measures 0 while the overlay is hidden.
+      var canvas = el('cropCanvas');
+      var fit = cropFit(srcCanvas.width, srcCanvas.height);
+      canvas.width = fit.w; canvas.height = fit.h;
+      canvas.style.width = fit.w + 'px'; canvas.style.height = fit.h + 'px';
+      var off = document.createElement('canvas');
+      off.width = fit.w; off.height = fit.h;
+      off.getContext('2d').drawImage(srcCanvas, 0, 0, fit.w, fit.h);
+      var iw = fit.w * 0.08, ih = fit.h * 0.08;
+      cropState = {
+        resolve: resolve, src: srcCanvas, off: off, mode: 'edit', warped: null, drag: null,
+        corners: [{ x: iw, y: ih }, { x: fit.w - iw, y: ih },
+                  { x: fit.w - iw, y: fit.h - ih }, { x: iw, y: fit.h - ih }]
+      };
+      cropPlaceHandles(); cropDrawEdit(); cropSetMode('edit');
+    });
+  }
+
   function onScanTap() {
     if (!settings.experimental) return; // belt and braces: button hides too
     if (!window.ScanParse) {
@@ -756,6 +949,8 @@
     showModal({
       title: 'Scan sizes',
       message: 'Take a photo of one page of the printed sheet, or choose photos. ' +
+        'After each photo you place four corner dots on the sheet and see ' +
+        'the straightened page before it is read. ' +
         'You can add more pages after each scan. ' +
         'Photos are read on this phone and discarded right after \u2014 nothing is saved or uploaded.',
       buttons: [
@@ -851,6 +1046,11 @@
         }
         showScan('Preparing photo…', 0);
         return downscaleImage(file).then(function (canvas) {
+          // Every photo, camera or upload, goes through the corner crop
+          // first: alex places the four dots, sees the straightened page,
+          // and only then does the reader run.
+          return cropStep(canvas);
+        }).then(function (canvas) {
           var label = files.length === 1 ? 'Reading your sheet'
             : 'Reading page ' + (idx + 1) + ' of ' + files.length;
           return runScan(canvas, label);

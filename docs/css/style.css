@@ -153,6 +153,18 @@ button:disabled { opacity: 0.35; }
 #scanBox { background: var(--card); color: var(--ink); padding: 1.111rem; border-radius: 0.667rem; width: 80%; max-width: 20rem; text-align: center; font-size: 1.05rem; }
 #scanBarWrap { height: 0.5rem; background: var(--border); border-radius: 0.25rem; overflow: hidden; margin-top: 0.667rem; }
 #scanBar { height: 100%; width: 0; background: var(--brand); transition: width 0.2s; }
+/* Manual corner-crop overlay (experimental Scan feature): four draggable
+   dots over the photo, then a perspective warp straightens the quad. */
+#cropOverlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); align-items: flex-start; justify-content: center; z-index: 101; overflow-y: auto; }
+#cropOverlay.open { display: flex; }
+#cropBox { background: var(--card); color: var(--ink); padding: 0.889rem; border-radius: 0.667rem; width: 94%; max-width: 30rem; margin: 1rem auto; text-align: center; }
+#cropTitle { font-size: 1.15rem; font-weight: bold; }
+#cropStage { position: relative; margin: 0.667rem auto; touch-action: none; }
+#cropCanvas { display: block; border-radius: 0.333rem; }
+.crop-handle { position: absolute; width: 2.2rem; height: 2.2rem; margin: -1.1rem 0 0 -1.1rem; border-radius: 50%; background: var(--brand); border: 0.167rem solid #fff; box-shadow: 0 0 0.333rem rgba(0,0,0,0.5); touch-action: none; cursor: grab; }
+#cropHint { color: var(--muted); font-size: 0.95rem; margin-bottom: 0.667rem; }
+#cropBox .mbtns { display: flex; flex-direction: column; gap: 0.556rem; }
+#cropBox .mbtns button { width: 100%; text-align: center; }
 .trow .q { font-size: 1.1rem; min-width: 3.333rem; text-align: right; }
 .trow input.qty {
   width: 5rem; font-size: 1.2rem; text-align: center;
