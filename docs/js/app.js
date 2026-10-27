@@ -8,7 +8,7 @@
   var M = window.JM;
   // Single source of truth for the displayed version (Projects title).
   // Bump this with every release, alongside the ?v= cache-busters.
-  var APP_VERSION = '1.5.0';
+  var APP_VERSION = '1.6.0';
 
   function el(id) { return document.getElementById(id); }
 
@@ -575,7 +575,8 @@
         var raw = document.createElement('div');
         raw.className = 'flag-raw';
         raw.textContent = 'Scanned as: ' + (e.scanFlag.raw || '(unreadable)') +
-          (e.scanFlag.reason === 'duplicate' ? ' \u2014 already in the list' : '');
+          (e.scanFlag.reason === 'duplicate' ? ' \u2014 already in the list' : '') +
+          (e.scanFlag.reason === 'missing' ? ' \u2014 not found on the page' : '');
         sz.appendChild(raw);
       } else {
         sz.textContent = M.displaySize(e.waist, e.length);
@@ -594,6 +595,13 @@
         var v = parseInt(qty.value, 10);
         if (e.scanFlag) {
           if (!isNaN(v) && v >= 0) {
+            if (e.scanFlag.reason === 'missing' && v === 0) {
+              // A missing size confirmed at zero means "don't input
+              // it": the row goes away instead of lingering as a 0.
+              p.entries.splice(pos, 1);
+              persist(); renderReview();
+              return;
+            }
             e.qty = v;
             if (maybeClearScanFlag(e)) { persist(); renderReview(); }
             else { persist(); updateReviewTotal(); }
@@ -782,7 +790,9 @@
   }
 
   /* Shrink the photo before OCR: faster, less memory, and plenty of
-     resolution left for big printed digits. */
+     resolution left for big printed digits. (Measured on alex's real
+     sheet photos: upscaling and contrast lifts both read WORSE than
+     the plain photo, so no pixel cleanup is done here.) */
   function downscaleImage(file) {
     return new Promise(function (resolve, reject) {
       var img = new Image();
@@ -846,7 +856,19 @@
           return runScan(canvas, label);
         }).then(function (result) {
           // The file, canvas and OCR result go out of scope here: discarded.
-          scanPages.push(window.ScanParse.parseScanResult(result.data || {}));
+          // Pages store raw lines; the template runs once over ALL pages
+          // combined, so core sizes are only flagged missing after every
+          // page has been read.
+          var data = result.data || {};
+          if (data.words && data.words.length) {
+            var words = data.words.map(function (w) {
+              var b = w.bbox || {};
+              return { text: w.text, x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1 };
+            });
+            scanPages.push(window.ScanParse.groupWords(words));
+          } else {
+            scanPages.push(String(data.text || '').split(/\n/));
+          }
         });
       });
     });
@@ -876,7 +898,9 @@
   /* Between pages: running totals plus the choice to add another page,
      review what is scanned so far, or drop the whole session. */
   function showPageModal() {
-    var merged = window.ScanParse.mergeScanResults(scanPages);
+    var allLines = [];
+    scanPages.forEach(function (lines) { allLines = allLines.concat(lines); });
+    var merged = window.ScanParse.parseTemplateLines(allLines);
     var rows = merged.rows || [];
     var ok = rows.filter(function (r) { return !r.flag; }).length;
     var bad = rows.length - ok;
@@ -894,10 +918,10 @@
     });
   }
 
-  /* Scanned rows land on the regular review screen, in paper order.
-     Unreadable and duplicate rows become flagged entries (empty size,
-     qty 0) that alex fixes with the new size editing or deletes; Confirm
-     refuses while any flagged row remains.
+  /* Scanned rows land on the regular review screen, in grid order.
+     Flagged rows become entries alex fixes or deletes; missing core
+     sizes arrive with their size pre-filled, so only the quantity needs
+     typing. Confirm refuses while any flagged row remains.
      Returns true when a modal was opened (the caller must not auto-close
      it) and false when it navigated straight to the review screen. */
   function importScan(parsed) {
@@ -917,7 +941,7 @@
     function doImport() {
       p.entries = rows.map(function (r) {
         if (r.flag) {
-          return { waist: '', length: '', qty: 0, scanFlag: { raw: r.raw, reason: r.flag } };
+          return { waist: r.waist || '', length: r.length || '', qty: 0, scanFlag: { raw: r.raw, reason: r.flag } };
         }
         return { waist: r.waist, length: r.length, qty: r.qty };
       });

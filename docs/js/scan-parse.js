@@ -1,16 +1,25 @@
 /* JeansMixing web — scan-parse.js
- * Pure OCR-result → size-row parser for the experimental Scan feature.
+ * Template parser for the experimental Scan feature.
  *
- * The work sheet is printed text, one size per row: two digits, an X, two
- * digits or the word ODD, then a quantity — e.g. "34 x ODD 25". Spaces do
- * not matter ("34xODD25" and "3 4 x 3 0 2 5" are the same row). The only
- * letters that ever appear are X and ODD, so anything else in a row means
- * the row is flagged for alex to fix by hand, never silently guessed.
+ * The freeform "read everything and guess the structure" approach failed
+ * on the real sheet (60 garbage rows): a tilted phone photo of a small
+ * table is too noisy for that. The sheet's sizes are FIXED, though, so
+ * the scanner works the other way around: it looks for each known size
+ * in turn and reads the number after it as the quantity.
  *
- * Fail-closed on purpose: a row that does not fit the pattern exactly
- * comes back flagged (with its raw text) instead of becoming a wrong size.
- * Rows with no digits at all are skipped quietly — those are headers and
- * titles, not sizes.
+ * Two classes of size:
+ *  - CORE (always on every sheet, up to 48xODD): waists 28-36, then
+ *    38,40,42,44,46,48, each with lengths 29,30,32,34,ODD. A core size
+ *    that is not found means the reader misread it, so it comes back
+ *    flagged (with the size pre-filled) for alex to type the quantity.
+ *  - OPTIONAL (only sometimes on the sheet): even waists 50-64, each
+ *    with lengths 29,30,32,34,ODD, plus 50x42. An optional size that is
+ *    not found is skipped silently — it simply isn't on this sheet.
+ * A found size with quantity 0 is also skipped: no row, no flag.
+ *
+ * Garbage lines are ignored, not flagged: only grid sizes matter, so
+ * background clutter and misread fragments can't flood the review
+ * screen the way they did with freeform parsing.
  *
  * No DOM here. Works in the browser (window.ScanParse) and in node
  * (module.exports) so the parser can be unit-tested like the model.
@@ -18,127 +27,94 @@
 (function (root) {
   'use strict';
 
-  /* Uppercase, turn a multiplication sign into X, drop punctuation. A lone
-     O inside a number is a misread 0 ("3O" -> "30") — but the word ODD is
-     protected first (and "0DD", OCR misreading ODD's O as a zero), so its
-     O never becomes a 0. */
-  function normalizeToken(tok) {
-    var t = String(tok).toUpperCase().replace(/×/g, 'X');
-    t = t.replace(/[^A-Z0-9]/g, '');
-    var P = '\u0001';
-    t = t.replace(/ODD/g, P).replace(/0DD/g, P);
-    if (/[0-9]/.test(t)) t = t.replace(/O/g, '0');
-    return t.replace(new RegExp(P, 'g'), 'ODD');
+  var CORE_WAISTS = ['28', '29', '30', '31', '32', '33', '34', '35', '36',
+    '38', '40', '42', '44', '46', '48'];
+  var CORE_LENGTHS = ['29', '30', '32', '34', '00']; // '00' prints as ODD
+  /* Optional bigger sizes: only sometimes on the sheet, so a missing
+     one is skipped silently. 50 also comes with an odd 42 length; every
+     other bigger waist uses the standard five lengths. The run stops at
+     64 — adding further waists later is one line in EXTRA_WAISTS. */
+  var EXTRA_WAISTS = ['50', '52', '54', '56', '58', '60', '62', '64'];
+
+  /** "30x32" or "30xODD" — same rule as the app's displaySize. */
+  function displaySize(w, l) {
+    return l === '00' ? w + 'xODD' : w + 'x' + l;
   }
 
-  /* Split one whitespace token on X boundaries, keeping the X's. Each unit
-     knows whether it directly followed an X inside the same token (no space
-     between them) — that matters because "34x3025" is one merged token
-     whose post-X digits split into length + quantity, while a standalone
-     "300" token is a separate field that can never be a length. */
-  function splitToken(tok) {
-    var t = normalizeToken(tok);
-    if (!t) return [];
-    var parts = t.split(/(X)/);
+  /** Every size the scanner looks for, in sheet order: the core grid,
+     then the optional bigger sizes. */
+  function gridSizes() {
     var out = [];
-    for (var i = 0; i < parts.length; i++) {
-      if (!parts[i]) continue;
-      out.push({ text: parts[i], attached: i > 0 && parts[i - 1] === 'X' });
-    }
+    CORE_WAISTS.forEach(function (w) {
+      CORE_LENGTHS.forEach(function (l) {
+        out.push({ waist: w, length: l, optional: false });
+      });
+    });
+    EXTRA_WAISTS.forEach(function (w) {
+      var lengths = w === '50'
+        ? ['29', '30', '32', '42', '00'] // 50's lengths, as listed: 42 sits between 32 and ODD
+        : CORE_LENGTHS;
+      lengths.forEach(function (l) {
+        out.push({ waist: w, length: l, optional: true });
+      });
+    });
     return out;
   }
 
-  /* Parse one row's units. Returns {waist, length, qty} (length '00' for
-     ODD) or null when the row does not fit the pattern. */
-  function parseRowUnits(units) {
-    var xIdx = -1;
-    for (var i = 0; i < units.length; i++) {
-      if (units[i].text === 'X') { xIdx = i; break; }
-    }
-    if (xIdx < 0) return null;
-    var waist = '';
-    for (var w = 0; w < xIdx; w++) waist += units[w].text;
-    if (!/^\d\d$/.test(waist)) return null;
-
-    var j = xIdx + 1;
-    if (j >= units.length) return null;
-    var length = null, qtyUnits = [];
-    var u = units[j];
-    if (u.text === 'ODD') {
-      length = '00';
-      qtyUnits = units.slice(j + 1);
-    } else if (u.text.indexOf('ODD') === 0 && u.text.length > 3) {
-      // Merged token like "ODD25": ODD is the length, the rest starts qty.
-      length = '00';
-      qtyUnits = [{ text: u.text.slice(3), attached: u.attached }]
-        .concat(units.slice(j + 1));
-    } else if (/^\d+$/.test(u.text)) {
-      if (u.text.length === 2) {
-        length = u.text;
-        qtyUnits = units.slice(j + 1);
-      } else if (u.text.length === 1) {
-        // Split digits ("3 0") accumulate until the length is 2 digits.
-        var acc = u.text, k = j + 1;
-        while (k < units.length && acc.length < 2) {
-          if (!/^\d$/.test(units[k].text)) return null;
-          acc += units[k].text;
-          k++;
-        }
-        if (acc.length !== 2) return null;
-        length = acc;
-        qtyUnits = units.slice(k);
-      } else if (u.attached) {
-        // One merged token, e.g. "3025" from "34x3025".
-        length = u.text.slice(0, 2);
-        qtyUnits = [{ text: u.text.slice(2), attached: true }]
-          .concat(units.slice(j + 1));
-      } else {
-        return null; // a standalone 3+ digit field can't be a length
-      }
-    } else {
-      return null;
-    }
-
-    var qty = '';
-    for (var q = 0; q < qtyUnits.length; q++) {
-      if (!/^\d+$/.test(qtyUnits[q].text)) return null;
-      qty += qtyUnits[q].text;
-    }
-    if (!qty) return null;
-    return { waist: waist, length: length, qty: parseInt(qty, 10) };
-  }
-
-  /* Parse one raw text line. Returns {waist, length, qty}, or
-     {skip: true} for digit-less header/title lines, or
-     {flag: 'unreadable'|'duplicate'...} — duplicates are flagged by
-     parseLines, not here. */
-  function parseRowText(text) {
-    var raw = String(text == null ? '' : text).trim();
-    if (!/[0-9]/.test(raw)) return { skip: true, raw: raw };
-    var units = [];
-    raw.split(/\s+/).forEach(function (tok) {
-      splitToken(tok).forEach(function (unit) { units.push(unit); });
+  /* Normalize one OCR line into a single joined string, spaces ignored:
+     uppercase, multiplication sign to X, punctuation stripped. A lone O
+     inside a number is a misread 0 ("3O" -> "30") and a lone I/L inside a
+     number is a misread 1 ("I5" -> "15") — but the word ODD is protected
+     first (and "0DD", OCR misreading ODD's O as a zero), so its letters
+     are never rewritten. Tokens without digits are left alone. */
+  function normalizeLine(line) {
+    var P = '\u0001'; // placeholder: survives the digit fixes, then becomes ODD again
+    var toks = String(line == null ? '' : line).toUpperCase().replace(/×/g, 'X').split(/\s+/);
+    var fixed = toks.map(function (tok) {
+      var t = tok.replace(/[^A-Z0-9]/g, '');
+      t = t.replace(/ODD/g, P).replace(/0DD/g, P);
+      if (/[0-9]/.test(t)) t = t.replace(/O/g, '0').replace(/I/g, '1').replace(/L/g, '1');
+      return t.replace(new RegExp(P, 'g'), 'ODD');
     });
-    var parsed = parseRowUnits(units);
-    if (!parsed) return { flag: 'unreadable', raw: raw };
-    parsed.raw = raw; // kept so later merges can flag repeats with their text
-    return parsed;
+    return fixed.join('');
   }
 
-  /* Parse text lines in paper order. Returns {rows} where each row is
-     either {waist, length, qty} or {flag, raw}. A second occurrence of a
-     size already seen is flagged 'duplicate' — the review screen's
-     no-duplicate rule applies to scanned rows too. */
-  function parseLines(lines) {
-    var rows = [], seen = {};
+  /* Find the first size + quantity in a line: two digits, X, two digits
+     or ODD, then the quantity digits. Returns {waist, length, qty}
+     (length '00' for ODD) or null when the line holds no size. */
+  function extractFromLine(line) {
+    var joined = normalizeLine(line);
+    var m = joined.match(/(\d\d)X(\d\d|ODD)(\d+)/);
+    if (!m) return null;
+    return { waist: m[1], length: m[2] === 'ODD' ? '00' : m[2], qty: parseInt(m[3], 10) };
+  }
+
+  /* Run the template over text lines (all pages combined, in order).
+     Returns {rows} in grid order: one entry per found size with qty > 0,
+     plus one flagged row per missing CORE size (size pre-filled, qty 0,
+     so alex only has to type the quantity). Optional sizes that are
+     absent, and found sizes with qty 0, produce nothing at all. */
+  function parseTemplateLines(lines) {
+    var found = {}; // "waistxlength" -> qty, first occurrence wins
     (lines || []).forEach(function (line) {
-      var r = parseRowText(line);
-      if (r.skip) return;
-      if (r.flag) { rows.push({ flag: r.flag, raw: r.raw }); return; }
-      var key = r.waist + 'x' + r.length;
-      if (seen[key]) { rows.push({ flag: 'duplicate', raw: String(line).trim() }); return; }
-      seen[key] = true;
-      rows.push(r);
+      var c = extractFromLine(line);
+      if (!c) return;
+      var key = c.waist + 'x' + c.length;
+      if (!(key in found)) found[key] = c.qty;
+    });
+    var rows = [];
+    gridSizes().forEach(function (g) {
+      var key = g.waist + 'x' + g.length;
+      if (key in found) {
+        if (found[key] > 0) {
+          rows.push({ waist: g.waist, length: g.length, qty: found[key] });
+        }
+      } else if (!g.optional) {
+        rows.push({
+          flag: 'missing', raw: displaySize(g.waist, g.length),
+          waist: g.waist, length: g.length
+        });
+      }
     });
     return { rows: rows };
   }
@@ -179,44 +155,28 @@
     });
   }
 
-  /* Merge several pages' results in page order. A size already seen on an
-     earlier page is flagged 'duplicate' — a multi-page sheet lists each
-     size once, so a repeat means a misread, not a second entry. */
-  function mergeScanResults(results) {
-    var rows = [], seen = {};
-    (results || []).forEach(function (res) {
-      (res.rows || []).forEach(function (r) {
-        if (r.flag) { rows.push(r); return; }
-        var key = r.waist + 'x' + r.length;
-        if (seen[key]) { rows.push({ flag: 'duplicate', raw: r.raw || '' }); return; }
-        seen[key] = true;
-        rows.push(r);
-      });
-    });
-    return { rows: rows };
-  }
-
-  /* Parse a Tesseract result object. Prefers word boxes (they carry
-     positions, so rows rebuild reliably); falls back to plain text lines
-     when the engine only returned text. */
-  function parseScanResult(data) {
+  /* Parse a Tesseract result object through the template. Prefers word
+     boxes (they carry positions, so lines rebuild reliably); falls back
+     to plain text lines when the engine only returned text. */
+  function parseScanTemplate(data) {
     data = data || {};
     if (data.words && data.words.length) {
       var words = data.words.map(function (w) {
         var b = w.bbox || {};
         return { text: w.text, x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1 };
       });
-      return parseLines(groupWords(words));
+      return parseTemplateLines(groupWords(words));
     }
-    return parseLines(String(data.text || '').split(/\n/));
+    return parseTemplateLines(String(data.text || '').split(/\n/));
   }
 
   var api = {
-    parseRowText: parseRowText,
-    parseLines: parseLines,
+    gridSizes: gridSizes,
+    normalizeLine: normalizeLine,
+    extractFromLine: extractFromLine,
+    parseTemplateLines: parseTemplateLines,
     groupWords: groupWords,
-    mergeScanResults: mergeScanResults,
-    parseScanResult: parseScanResult
+    parseScanTemplate: parseScanTemplate
   };
 
   if (typeof module !== 'undefined' && module.exports) {
