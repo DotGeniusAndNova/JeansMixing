@@ -831,13 +831,6 @@
     });
     return cropLibPromise;
   }
-  /* Start the download early (Scan chooser, crop screen) so it overlaps
-     the time alex spends picking and placing — the wait at Straighten is
-     then usually zero. Failures are swallowed here; Straighten retries. */
-  function preloadCropLib() {
-    try { ensureCropLib().catch(function () {}); } catch (e) {}
-  }
-
   /* Warp the quad (corners in SOURCE canvas coords, order TL, TR, BR, BL)
      into a straight rectangle. Output size comes from the quad's own
      edge lengths, capped like the downscale step. */
@@ -1031,9 +1024,6 @@
                   { x: fit.w - iw, y: fit.h - ih }, { x: iw, y: fit.h - ih }]
       };
       cropPlaceHandles(); cropDrawEdit(); cropSetMode('edit');
-      // Show the download progress at once if the straightener is still
-      // on its way (preloaded from the Scan chooser).
-      preloadCropLib(); cropUpdateLoadLine();
     });
   }
 
@@ -1048,7 +1038,6 @@
   }
 
   function showScanChooser() {
-    preloadCropLib();
     showModal({
       title: 'Scan sizes',
       message: 'Take a photo of one page of the printed sheet, or choose photos. ' +
