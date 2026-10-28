@@ -8,7 +8,7 @@
   var M = window.JM;
   // Single source of truth for the displayed version (Projects title).
   // Bump this with every release, alongside the ?v= cache-busters.
-  var APP_VERSION = '1.7.0';
+  var APP_VERSION = '1.7.1';
 
   function el(id) { return document.getElementById(id); }
 
@@ -750,10 +750,9 @@
      cropping can never break a scan.
      The download is metered: jsDelivr (the same CDN the text reader
      already uses) allows the page to count bytes, while the old docs host
-     sends no CORS header and cannot be metered. The metered fetch runs
-     through a Blob URL, which is safe here because this build embeds its
-     WASM as a data URI (no separate .wasm fetch to break). If metering
-     fails, it falls back to a plain script tag from the docs host. */
+     sends no CORS header and cannot be metered. The counted fetch warms
+     the caches and the script then loads normally from the same URL. If
+     metering fails, it falls back to a plain script tag from the docs host. */
   var cropLibPromise = null, cropLibLoaded = false;
   var cropLoadTotal = 0, cropLoadDone = 0;
   function cropLoadStatusText() {
@@ -793,29 +792,51 @@
     });
   }
   function loadCropLibMetered() {
-    return fetch('https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.7.0-release.1/dist/opencv.js').then(function (resp) {
+    /* Count the download for progress, then load the script NORMALLY from
+       the same URL: the counted fetch warms the browser and service-worker
+       caches (jsDelivr marks it immutable, a year), so the script tag
+       hits cache instantly. The earlier Blob-URL execution wedged on
+       alex's phone (5 minutes stuck on "Straightening…" with no way out),
+       while the plain script-tag path is the one that worked in v1.7.0. */
+    var controller = null;
+    try { controller = new AbortController(); } catch (e) { controller = null; }
+    var idleTimer = null;
+    function armIdle() {
+      if (!controller) return;
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(function () { try { controller.abort(); } catch (e) {} }, 60000);
+    }
+    function clearIdle() { clearTimeout(idleTimer); }
+    var opts = controller ? { signal: controller.signal } : {};
+    return fetch('https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.7.0-release.1/dist/opencv.js', opts).then(function (resp) {
       if (!resp.ok || !resp.body) throw new Error('metered fetch unavailable');
-      cropLoadTotal = parseInt(resp.headers.get('content-length') || '0', 10) || 0;
+      /* The decoded size of this exact pinned file, verified by download.
+         jsDelivr compresses the transfer, so when content-encoding is
+         present the content-length header is the COMPRESSED size (~2.0 MB)
+         while the reader yields DECODED bytes (8.6 MB) — dividing those
+         showed a silly 437%. The pinned URL never changes, so its decoded
+         size is the honest total whenever the header is compressed. */
+      var CROP_LIB_DECODED_BYTES = 8980564;
+      var encoded = resp.headers.get('content-encoding');
+      var len = parseInt(resp.headers.get('content-length') || '0', 10) || 0;
+      cropLoadTotal = encoded ? CROP_LIB_DECODED_BYTES : len;
       cropLoadDone = 0; cropUpdateLoadLine();
+      armIdle();
       var reader = resp.body.getReader();
-      var chunks = [];
       function pump() {
         return reader.read().then(function (r) {
           if (r.done) {
-            var url = URL.createObjectURL(new Blob(chunks, { type: 'text/javascript' }));
-            return loadCropLibScript(url).then(function (cv) {
-              URL.revokeObjectURL(url);
-              return cv;
-            }, function (e) { URL.revokeObjectURL(url); throw e; });
+            clearIdle();
+            return loadCropLibScript('https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.7.0-release.1/dist/opencv.js');
           }
-          chunks.push(r.value);
           cropLoadDone += r.value.byteLength;
           cropUpdateLoadLine();
+          armIdle();
           return pump();
         });
       }
       return pump();
-    });
+    }).then(function (v) { clearIdle(); return v; }, function (e) { clearIdle(); throw e; });
   }
   function ensureCropLib() {
     if (window.cv && window.cv.Mat) { cropLibLoaded = true; return Promise.resolve(window.cv); }
@@ -944,7 +965,11 @@
   function cropStraighten() {
     var st = cropState; if (!st) return;
     el('cropTitle').textContent = 'Straightening…';
-    ['cropStraighten', 'cropSkipEdit'].forEach(function (id) { el(id).disabled = true; });
+    /* Only Straighten is disabled: Skip stays live the whole wait, so a
+       stuck load can never trap alex on this screen again — skipping
+       finishes with the original photo, and the pending load resolving
+       later is ignored (cropState is null by then) or warms the next run. */
+    el('cropStraighten').disabled = true;
     var canvas = el('cropCanvas');
     var fx = st.src.width / canvas.width, fy = st.src.height / canvas.height;
     var srcCorners = st.corners.map(function (c) { return { x: c.x * fx, y: c.y * fy }; });
