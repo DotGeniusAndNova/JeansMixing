@@ -8,7 +8,7 @@
   var M = window.JM;
   // Single source of truth for the displayed version (Projects title).
   // Bump this with every release, alongside the ?v= cache-busters.
-  var APP_VERSION = '1.7.1';
+  var APP_VERSION = '1.8.0';
 
   function el(id) { return document.getElementById(id); }
 
@@ -2325,12 +2325,12 @@
 
   /* ------------------------------------------------------- straight mix */
   // Box math: ceil(total/capacity), plus one safety box when the fractional
-  // part goes over .5 (undercount buffer).
-  function straightBoxMath(total, capacity) {
+  // part goes over .5 (undercount buffer) — unless alex overrode it off.
+  function straightBoxMath(total, capacity, noSafety) {
     var exact = total / capacity;
     var frac = exact - Math.floor(exact);
     var safety = frac > 0.5;
-    var boxes = Math.ceil(exact) + (safety ? 1 : 0);
+    var boxes = Math.ceil(exact) + (safety && !noSafety ? 1 : 0);
     return { total: total, capacity: capacity, exact: exact, boxes: boxes, safety: safety };
   }
   function mixTotal(p) {
@@ -2462,14 +2462,19 @@
   function showMixBoxes() {
     var p = activeProject();
     if (!p || p.mode !== 'straight' || !(p.boxCapacity > 0)) return showProjects();
-    var m = straightBoxMath(mixTotal(p), p.boxCapacity);
+    var m = straightBoxMath(mixTotal(p), p.boxCapacity, p.mixNoSafety);
+    if (!m.safety) p.mixNoSafety = false; // override is moot without a safety box
     p.mixBoxes = m.boxes;
     persist();
     var html = m.total + ' ' + (p.itemName || 'items') + ' \u00f7 ' + m.capacity +
       ' per box = ' + m.exact.toFixed(2);
-    if (m.safety) html += '<div class="sub">Over .5, so one safety box is included.</div>';
+    if (m.safety && !p.mixNoSafety) html += '<div class="sub">Over .5, so one safety box is included.</div>';
+    if (m.safety && p.mixNoSafety) html += '<div class="sub">Over .5, but you skipped the safety box.</div>';
     html += '<div class="mix-big">Make ' + m.boxes + ' box' + (m.boxes === 1 ? '' : 'es') + '</div>';
     el('mixBoxesMath').innerHTML = html;
+    var ov = el('mixBoxesOverride');
+    ov.style.display = m.safety ? '' : 'none';
+    ov.textContent = p.mixNoSafety ? 'Add the safety box back' : 'Skip the safety box';
     show('mixboxes');
   }
 
@@ -3233,6 +3238,13 @@
       showMixBoxes();
     };
     el('mixBoxesBack').onclick = function () { showMixCapacity(); };
+    el('mixBoxesOverride').onclick = function () {
+      var p = activeProject();
+      if (!p) return showProjects();
+      p.mixNoSafety = !p.mixNoSafety;
+      persist();
+      showMixBoxes();
+    };
     el('mixBoxesSave').onclick = function () {
       var p = activeProject();
       if (!p) return showProjects();
