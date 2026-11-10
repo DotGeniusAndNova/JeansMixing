@@ -10,13 +10,16 @@
   var BOX_CAPACITY = 25;
   var BUNDLE_SIZE = 6;
 
-  /** "30x32" or "30xODD" — waist/length kept as raw 2-digit strings. */
+  /** "30x32" or "30xODD" — waist/length kept as raw 2-digit strings.
+      An "Any Size" catch-all entry carries no length: it renders as-is. */
   function displaySize(w, l) {
+    if (!l) return w;
     return l === '00' ? w + 'xODD' : w + 'x' + l;
   }
 
   /** "30 x 32" / "30 x ODD" — the spaced label used on placing screens. */
   function prettySize(e) {
+    if (e.anySize) return 'Any Size';
     return e.waist + ' x ' + (e.length === '00' ? 'ODD' : e.length);
   }
 

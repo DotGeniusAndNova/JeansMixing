@@ -8,7 +8,7 @@
   var M = window.JM;
   // Single source of truth for the displayed version (Projects title).
   // Bump this with every release, alongside the ?v= cache-busters.
-  var APP_VERSION = '1.8.0';
+  var APP_VERSION = '2.0.0';
 
   function el(id) { return document.getElementById(id); }
 
@@ -395,7 +395,10 @@
   }
 
   function tapField(f) {
-    if (f === 0) entry.waist = '';
+    // Tapping the waist box clears the length box too, so fixing e.g.
+    // 33 x 03 to 34 x 30 flows straight through the way he normally types.
+    // (Trade: a length that was already right has to be retyped.)
+    if (f === 0) { entry.waist = ''; entry.length = ''; }
     else if (f === 1) entry.length = '';
     else entry.qty = '';
     entry.focused = f;
@@ -1307,11 +1310,22 @@
       var q = document.createElement('div');
       q.className = 'q';
       q.textContent = e.qty;
+      // The list shows the LIVE count (matching the placing screens); when
+      // a transfer changed it, the original sits next to it, struck through.
+      if (e.origQty != null && e.origQty > 0 && e.qty !== e.origQty) {
+        var orig = document.createElement('span');
+        orig.className = 'qorig';
+        orig.textContent = e.origQty;
+        q.appendChild(document.createTextNode(' '));
+        q.appendChild(orig);
+      }
       row.appendChild(sz);
       row.appendChild(q);
       rows.appendChild(row);
     });
-    var total = p.entries.reduce(function (s, e) { return s + e.qty; }, 0);
+    // The bottom line is frozen at the locked total: a rollover grows a
+    // size's count but never the order total (or the box count).
+    var total = origTotal(p);
     var cap = (p.pairsPerBox > 0) ? p.pairsPerBox : M.BOX_CAPACITY;
     el('lockedTotal').textContent = total + ' pairs \u2192 ' + (total / cap) + ' boxes';
 
@@ -1406,35 +1420,42 @@
     // Bundle/layer slot of the upcoming placement (next box in line).
     var inNext = r.boxCounts[r.nextBox];
     var boxNo = r.nextBox + 1;
+    // Progress so far, floored against the frozen original total — 100%
+    // only when the last pair is placed (e.g. 75 of 750 reads "(10%)").
+    var placedTotal = r.placedPerSize.reduce(function (a, b) { return a + b; }, 0);
+    var pctTxt = ' (' + Math.floor(placedTotal / Math.max(1, origTotal(p)) * 100) + '%)';
     var blv = el('bundleLayerView');
     var pFlip = projectFlip(p), pBundles = projectBundles(p);
     var fc = el('flipCue');
     // Preview mode: looking ahead at a size past the first unfinished one.
     // The flip cue's reserved space shows "(preview)" instead — no layout shift.
     if (current > firstOpenSize(p)) {
-      blv.textContent = 'layer ' + (inNext + 1) + ', box ' + boxNo;
+      blv.textContent = 'layer ' + (inNext + 1) + ', box ' + boxNo + pctTxt;
       fc.textContent = '(preview)';
       fc.style.visibility = 'visible';
     } else if (!pFlip) {
-      blv.textContent = 'layer ' + (inNext + 1) + ', box ' + boxNo;
+      blv.textContent = 'layer ' + (inNext + 1) + ', box ' + boxNo + pctTxt;
       fc.textContent = '\uD83D\uDD04 flip after this pair';
       fc.style.visibility = 'hidden';
     } else {
       var slot = bundleSlot(inNext, pBundles);
       fc.textContent = '\uD83D\uDD04 flip after this pair';
       if (!slot) {
-        blv.textContent = 'layer ' + (inNext + 1) + ', box ' + boxNo;
+        blv.textContent = 'layer ' + (inNext + 1) + ', box ' + boxNo + pctTxt;
         fc.style.visibility = 'hidden';
       } else {
-        blv.textContent = slot.layers === 1
+        blv.textContent = (slot.layers === 1
           ? slot.name + ', box ' + boxNo
-          : slot.name + ', layer ' + slot.layer + ', box ' + boxNo;
+          : slot.name + ', layer ' + slot.layer + ', box ' + boxNo) + pctTxt;
         fc.style.visibility = (slot.lastLayer && !slot.isLast) ? 'visible' : 'hidden';
       }
     }
 
     renderQuickAdds(placed < needed);
-    setEnabled(el('placeUndo'), placed > 0);
+    // Undo stays enabled while anything affecting this size can be reverted
+    // — including a transfer into it, even at 0 placed (e.g. a fresh
+    // Any Size whose creation is the thing to undo).
+    setEnabled(el('placeUndo'), findUndoIndex(p) >= 0);
     setEnabled(el('placeLeft'), current > 0);
     setEnabled(el('placeRight'), current < p.entries.length - 1);
 
@@ -1471,7 +1492,9 @@
       rows.appendChild(row);
     });
     var sumPlaced = r.placedPerSize.reduce(function (a, b) { return a + b; }, 0);
-    var sumQty = p.entries.reduce(function (s, e) { return s + e.qty; }, 0);
+    // Frozen denominator: a rollover moves a pair between sizes, it never
+    // adds one — so the end total stays e.g. 100/100, never 100/101.
+    var sumQty = origTotal(p);
     el('completeTotal').textContent = sumPlaced + ' / ' + sumQty + ' pairs placed';
   }
 
@@ -1565,27 +1588,54 @@
   }
 
   /** Undo: remove this size's most recent press. No-op at 0 placed. */
+  /** Most recent log entry affecting the viewed size — a placement on it,
+      a transfer INTO it, or the creation of it (Any Size). A transfer's
+      event belongs to its SOURCE size, so without the middle match an Undo
+      pressed on the receiving size would eat one of its real placements
+      instead and leave the transfer stranded. -1 when nothing to undo. */
+  function findUndoIndex(p) {
+    for (var i = p.placingEvents.length - 1; i >= 0; i--) {
+      var ev = p.placingEvents[i];
+      if (ev.size === current ||
+          (ev.qtyTransfer && ev.qtyTransfer.idx === current) ||
+          (ev.anySizeCreated != null && ev.anySizeCreated === current)) return i;
+    }
+    return -1;
+  }
+
   function onUndo() {
     var p = activeProject();
-    var idx = -1;
-    for (var i = p.placingEvents.length - 1; i >= 0; i--) {
-      if (p.placingEvents[i].size === current) { idx = i; break; }
-    }
+    var idx = findUndoIndex(p);
     if (idx < 0) return;
     var removed = p.placingEvents.splice(idx, 1)[0];
     if (removed.qtyTransfer) {
       // Undoing a Done: revert the quantity transfer into the next size AND
-      // reopen this size, so the pair of changes can never drift apart.
+      // reopen the size it came from, so the pair of changes can never drift
+      // apart. The SOURCE size reopens — which may not be the viewed one.
       var tr = removed.qtyTransfer;
       var beforeQty = p.entries[tr.idx].qty;
       p.entries[tr.idx].qty -= tr.delta;
-      p.doneSizes = p.doneSizes.filter(function (i) { return i !== current; });
-      if (p.shortOk) delete p.shortOk[current];
-      p.timeline.push({ size: current, t: Date.now(),
+      p.doneSizes = p.doneSizes.filter(function (i) { return i !== removed.size; });
+      if (p.shortOk) delete p.shortOk[removed.size];
+      p.timeline.push({ size: removed.size, t: Date.now(),
         text: 'undo transfer (' + M.prettySize(p.entries[tr.idx]) + ' back to ' +
           p.entries[tr.idx].qty + ')' });
       p.timeline.push({ size: tr.idx, t: Date.now(),
         text: 'changed total count from ' + beforeQty + ' back to ' + p.entries[tr.idx].qty });
+    } else if (removed.anySizeCreated != null) {
+      // Undoing a shortfall that created the Any Size catch-all: remove the
+      // size itself and reopen the size the shortfall came from.
+      var createdIdx = removed.anySizeCreated;
+      if (p.entries[createdIdx] && p.entries[createdIdx].anySize) {
+        p.entries.splice(createdIdx, 1);
+      }
+      p.doneSizes = p.doneSizes.filter(function (i) {
+        return i !== removed.size && i !== createdIdx;
+      });
+      if (p.shortOk) delete p.shortOk[removed.size];
+      if (current === createdIdx) { current = removed.size; saveCurrent(); }
+      p.timeline.push({ size: removed.size, t: Date.now(),
+        text: 'undo transfer (Any Size removed)' });
     } else {
       // Name the box the dealing has stepped back to: the box holding the
       // most recent remaining pair (the undone pair's predecessor).
@@ -1615,6 +1665,87 @@
     p.doneSizes = p.doneSizes.filter(function (i) {
       return r.placedPerSize[i] >= p.entries[i].qty || (p.shortOk && p.shortOk[i]);
     });
+  }
+
+  /** Original total, frozen at lock (origQty). Any Size pairs are part of
+      that original total, so they contribute 0 — the denominator never grows. */
+  function origTotal(p) {
+    return p.entries.reduce(function (s, e) {
+      return s + (e.origQty != null ? e.origQty : e.qty);
+    }, 0);
+  }
+
+  /** First unfinished size after idx (finished sizes are never touched by
+      a transfer); -1 when every size after it is finished. */
+  function nextUnfinishedAfter(p, idx) {
+    for (var i = idx + 1; i < p.entries.length; i++) {
+      if (p.doneSizes.indexOf(i) < 0) return i;
+    }
+    return -1;
+  }
+
+  /** Pairs already transferred out of a size, split by direction, from its
+      count:0 qtyTransfer events. Lets Done offer only what's still unmoved,
+      so pressing Done twice can never transfer the same pair twice. */
+  function transferredOut(p, idx) {
+    var out = { over: 0, short: 0 };
+    p.placingEvents.forEach(function (e) {
+      if (e.size === idx && e.qtyTransfer) {
+        if (e.qtyTransfer.delta < 0) out.over += -e.qtyTransfer.delta;
+        else out.short += e.qtyTransfer.delta;
+      }
+    });
+    return out;
+  }
+
+  /** The existing Any Size catch-all entry, or -1. */
+  function anySizeIndex(p) {
+    for (var i = 0; i < p.entries.length; i++) {
+      if (p.entries[i].anySize) return i;
+    }
+    return -1;
+  }
+
+  /** Where a shortfall from idx can go: the first unfinished size after it,
+      the existing Any Size catch-all (never idx itself), a brand-new Any
+      Size, or nowhere (idx IS the Any Size — its pairs have no home). */
+  function shortfallDestination(p, idx) {
+    var target = nextUnfinishedAfter(p, idx);
+    if (target >= 0) return { kind: 'size', idx: target };
+    var anyIdx = anySizeIndex(p);
+    if (anyIdx >= 0 && anyIdx !== idx) return { kind: 'size', idx: anyIdx };
+    if (!p.entries[idx].anySize) return { kind: 'create' };
+    return { kind: 'none' };
+  }
+
+  /** Apply a transfer: the target's qty moves by delta, recorded as a
+      count:0 qtyTransfer event in the placing log (replay ignores it) so
+      Undo can revert it exactly. History lives on the receiving size. */
+  function applyTransfer(p, fromIdx, targetIdx, delta) {
+    var oldQty = p.entries[targetIdx].qty;
+    p.entries[targetIdx].qty += delta;
+    p.placingEvents.push({ size: fromIdx, count: 0, t: Date.now(),
+      qtyTransfer: { idx: targetIdx, delta: delta } });
+    p.timeline.push({ size: targetIdx, t: Date.now(),
+      text: 'changed total count from ' + oldQty + ' to ' + p.entries[targetIdx].qty });
+  }
+
+  /** On Done, carry the box forward: if the size we're moving to has no
+      history yet, forward the previous size's latest placement as time +
+      box only (no +N) — so the fresh size shows where he left off. */
+  function forwardHistory(p, fromIdx, toIdx) {
+    if (toIdx < 0 || toIdx >= p.entries.length) return;
+    var hasAny = p.timeline.some(function (t) { return t.size === toIdx; });
+    if (hasAny) return;
+    for (var i = p.timeline.length - 1; i >= 0; i--) {
+      var t = p.timeline[i];
+      if (t.size !== fromIdx) continue;
+      var m = /Box (\d+)/.exec(t.text);
+      if (m) {
+        p.timeline.push({ size: toIdx, t: t.t, text: 'Box ' + m[1] });
+        return;
+      }
+    }
   }
 
   /** Surgically removes a size's K most recent placements from the log. */
@@ -1655,7 +1786,7 @@
           label: 'OK', primary: true, onClick: function (api) {
             var v = parseInt(api.input.value, 10);
             if (isNaN(v)) return;
-            applyManualEdit(Math.max(0, v));
+            return applyManualEdit(Math.max(0, v));
           }
         },
         { label: 'Cancel' }
@@ -1677,19 +1808,62 @@
     syncDone(p);
     persist();
     renderPlacing();
+    // Correcting a FINISHED size past its total: offer the transfer right
+    // here. The Done press it used to wait for may never come — the count
+    // popup's OK is the whole action for the user — so without this the
+    // excess just sits there and nothing ever moves.
+    // Returns false when the offer opens, so the count popup's button
+    // wrapper doesn't close the offer right after it opens.
+    if (p.doneSizes.indexOf(current) >= 0) {
+      var needed = p.entries[current].qty;
+      var excess = newVal - needed - transferredOut(p, current).over;
+      if (excess > 0) {
+        var target = nextUnfinishedAfter(p, current);
+        if (target >= 0) {
+          var label = M.prettySize(p.entries[target]);
+          showModal({
+            title: 'Extra pairs',
+            message: 'You placed ' + newVal + ', but ' + needed + ' were needed \u2014 ' +
+                     excess + ' extra. Subtract ' + excess + ' from ' + label + '?',
+            rowButtons: true,
+            buttons: [
+              {
+                label: 'Yes', primary: true, onClick: function () {
+                  applyTransfer(p, current, target, -excess);
+                  syncDone(p);
+                  persist();
+                  renderPlacing();
+                }
+              },
+              { label: 'Keep it' }
+            ]
+          });
+          return false;
+        }
+      }
+    }
   }
 
-  /** Per-size Done: advance, or handle a shortfall / overplacement via popup. */
+  /** Per-size Done: advance, or handle a shortfall / overplacement via popup.
+      Transfers aim at the first UNFINISHED size after this one (never a
+      finished size), and only the pairs not already moved are offered —
+      so pressing Done twice can never transfer the same pair twice. */
   function onSizeDone() {
     var p = activeProject();
     var r = M.replay(p);
     var placed = r.placedPerSize[current];
     var needed = p.entries[current].qty;
-    if (placed < needed) {
+    var tr = transferredOut(p, current);
+    var shortfall = needed - placed - tr.short;
+    var excess = placed - needed - tr.over;
+    if (shortfall > 0) {
+      var dest = shortfallDestination(p, current);
       var sfMsg = 'You only placed ' + placed + ' out of ' + needed + '.';
-      if (current < p.entries.length - 1) {
-        sfMsg += ' The missing ' + (needed - placed) + ' will be added to ' +
-          M.prettySize(p.entries[current + 1]) + '.';
+      if (dest.kind === 'size') {
+        sfMsg += ' The missing ' + shortfall + ' will be added to ' +
+          M.prettySize(p.entries[dest.idx]) + '.';
+      } else if (dest.kind === 'create') {
+        sfMsg += ' A new size, Any Size, will be added with the missing ' + shortfall + '.';
       }
       sfMsg += ' Are you sure?';
       showModal({
@@ -1701,12 +1875,13 @@
           { label: 'No' }
         ]
       });
-    } else if (placed > needed) {
-      onOverplacement(placed, needed);
+    } else if (excess > 0) {
+      onOverplacement(placed, needed, excess);
     } else {
       if (p.doneSizes.indexOf(current) < 0) p.doneSizes.push(current);
-      persist();
       current++;
+      forwardHistory(p, current - 1, current);
+      persist();
       saveCurrent();
       renderPlacing();
     }
@@ -1715,41 +1890,53 @@
   /**
    * Shortfall accepted: the size is done as-is. This size's qty is NEVER
    * rewritten — it keeps showing its true count in red with "(0 left)".
-   * The shortfall itself rolls into the NEXT size's qty (order total
-   * preserved), recorded as a count:0 qtyTransfer event in the placing log
-   * (replay ignores it) so Undo can revert the transfer exactly.
+   * The shortfall itself rolls into the first unfinished size after this
+   * one (or the Any Size catch-all when none is left), recorded as a
+   * count:0 qtyTransfer event in the placing log (replay ignores it) so
+   * Undo can revert the transfer exactly.
    * shortOk remembers the confirmation so syncDone doesn't un-mark it.
    */
   function acceptShortfall(placed, needed) {
     var p = activeProject();
-    var shortfall = needed - placed;
+    var shortfall = needed - placed - transferredOut(p, current).short;
     p.shortOk = p.shortOk || {};
     p.shortOk[current] = true;
-    if (shortfall > 0 && current < p.entries.length - 1) {
-      var oldQty = p.entries[current + 1].qty;
-      p.entries[current + 1].qty += shortfall;
-      p.placingEvents.push({ size: current, count: 0, t: Date.now(),
-        qtyTransfer: { idx: current + 1, delta: shortfall } });
-      // History lives on the RECEIVING size (its timeline filter shows it):
-      // its total count is the one that changed.
-      p.timeline.push({ size: current + 1, t: Date.now(),
-        text: 'changed total count from ' + oldQty + ' to ' + p.entries[current + 1].qty });
+    if (shortfall > 0) {
+      var dest = shortfallDestination(p, current);
+      if (dest.kind === 'size') {
+        applyTransfer(p, current, dest.idx, shortfall);
+      } else if (dest.kind === 'create') {
+        // No unfinished size ahead: the leftover pairs get their own
+        // catch-all size, created with the shortfall as its count. Its
+        // origQty is 0 — the pairs are part of the original total, so the
+        // frozen denominator must not count them twice.
+        var newIdx = p.entries.length;
+        p.entries.push({ waist: 'Any Size', length: '', qty: shortfall, origQty: 0, anySize: true });
+        p.placingEvents.push({ size: current, count: 0, t: Date.now(),
+          anySizeCreated: newIdx, delta: shortfall });
+        p.timeline.push({ size: newIdx, t: Date.now(),
+          text: 'created with ' + shortfall + ' pairs (shortfall from ' + M.prettySize(p.entries[current]) + ')' });
+      }
+      // kind 'none': this IS the Any Size — its pairs have nowhere to go;
+      // it just stays done-short.
     }
     if (p.doneSizes.indexOf(current) < 0) p.doneSizes.push(current);
-    persist();
     current++;
+    forwardHistory(p, current - 1, current);
+    persist();
     saveCurrent();
     renderPlacing();
   }
 
   /**
    * Overplacement: the user placed more than needed. Offer to subtract the
-   * excess from the next size's needed. Last size: warn and let them keep it.
+   * excess from the first unfinished size after this one. No unfinished
+   * size ahead: warn and let them keep it.
    */
-  function onOverplacement(placed, needed) {
+  function onOverplacement(placed, needed, excess) {
     var p = activeProject();
-    var excess = placed - needed;
-    if (current >= p.entries.length - 1) {
+    var target = nextUnfinishedAfter(p, current);
+    if (target < 0) {
       showModal({
         title: 'Extra pairs',
         message: excess + ' extra, but there\'s no next size \u2014 ' +
@@ -1759,8 +1946,9 @@
           {
             label: 'Keep it', primary: true, onClick: function () {
               if (p.doneSizes.indexOf(current) < 0) p.doneSizes.push(current);
-              persist();
               current++;
+              forwardHistory(p, current - 1, current);
+              persist();
               saveCurrent();
               renderPlacing();
             }
@@ -1769,7 +1957,7 @@
         ]
       });
     } else {
-      var nextLabel = M.prettySize(p.entries[current + 1]);
+      var nextLabel = M.prettySize(p.entries[target]);
       showModal({
         title: 'Extra pairs',
         message: 'You placed ' + placed + ', but ' + needed + ' were needed \u2014 ' +
@@ -1778,17 +1966,12 @@
         buttons: [
           {
             label: 'Yes', primary: true, onClick: function () {
-              var oldQty = p.entries[current + 1].qty;
-              p.entries[current + 1].qty -= excess;
-              // recorded as a transfer event so Undo reverts it exactly
-              p.placingEvents.push({ size: current, count: 0, t: Date.now(),
-                qtyTransfer: { idx: current + 1, delta: -excess } });
-              p.timeline.push({ size: current + 1, t: Date.now(),
-                text: 'changed total count from ' + oldQty + ' to ' + p.entries[current + 1].qty });
+              applyTransfer(p, current, target, -excess);
               if (p.doneSizes.indexOf(current) < 0) p.doneSizes.push(current);
               syncDone(p);
-              persist();
               current++;
+              forwardHistory(p, current - 1, current);
+              persist();
               saveCurrent();
               renderPlacing();
             }
