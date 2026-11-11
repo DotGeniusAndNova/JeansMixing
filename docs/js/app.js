@@ -8,7 +8,7 @@
   var M = window.JM;
   // Single source of truth for the displayed version (Projects title).
   // Bump this with every release, alongside the ?v= cache-busters.
-  var APP_VERSION = '2.0.0';
+  var APP_VERSION = '2.1.0';
 
   function el(id) { return document.getElementById(id); }
 
@@ -28,6 +28,18 @@
      Global preferences (localStorage 'jm_settings_v1'). Defaults reproduce the
      app exactly as-is; everything here is opt-in customization. */
   var SETTINGS_KEY = 'jm_settings_v1';
+  /** "HH:MM" -> minutes since midnight. */
+  function toMins(hhmm) {
+    var parts = String(hhmm || '').split(':');
+    return (parseInt(parts[0], 10) || 0) * 60 + (parseInt(parts[1], 10) || 0);
+  }
+  /** "H:MM" -> "HH:MM". */
+  function normTime(hhmm) {
+    var parts = String(hhmm || '').split(':');
+    var h = Math.max(0, Math.min(23, parseInt(parts[0], 10) || 0));
+    var m = Math.max(0, Math.min(59, parseInt(parts[1], 10) || 0));
+    return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m;
+  }
   function defaultSettings() {
     return {
       pairsPerBox: 25,
@@ -42,7 +54,14 @@
       quickAdds: [1, 5, 10],
       darkMode: false,
       uiScale: 1,
-      experimental: false
+      experimental: false,
+      // Set-and-forget break ranges (alex's usual times). Scoring-only:
+      // they adjust the leaderboard time, never the placing itself.
+      breaks: [
+        { start: '10:00', end: '10:30' },
+        { start: '13:00', end: '13:15' },
+        { start: '15:00', end: '15:15' }
+      ]
     };
   }
   function loadSettings() {
@@ -55,8 +74,18 @@
       quickAdds: d.quickAdds,
       darkMode: s.darkMode === true,
       uiScale: (s.uiScale > 0) ? Math.min(2, Math.max(0.5, s.uiScale)) : d.uiScale,
-      experimental: s.experimental === true
+      experimental: s.experimental === true,
+      breaks: d.breaks
     };
+    if (Array.isArray(s.breaks)) {
+      out.breaks = s.breaks.filter(function (b) {
+        return b && /^\d{1,2}:\d{2}$/.test(b.start || '') && /^\d{1,2}:\d{2}$/.test(b.end || '');
+      }).map(function (b) {
+        return { start: normTime(b.start), end: normTime(b.end) };
+      }).filter(function (b) {
+        return toMins(b.end) > toMins(b.start);
+      }).slice(0, 6);
+    }
     if (Array.isArray(s.bundles) && s.bundles.length) {
       out.bundles = s.bundles.filter(function (b) {
         return b && typeof b.name === 'string' && b.layers > 0;
@@ -147,7 +176,7 @@
 
   /* ------------------------------------------------------------ navigation */
   var VIEWS = ['projects', 'entry', 'review', 'locked', 'placing', 'box', 'stapling', 'settings', 'bundles',
-    'mixsizes', 'mixcapacity', 'mixboxes', 'mixplacing', 'mixbox'];
+    'mixsizes', 'mixcapacity', 'mixboxes', 'mixplacing', 'mixbox', 'leaderboard'];
   // Where Back from Settings should return to ('projects' or 'entry').
   var settingsReturn = 'projects';
   function show(name) {
@@ -160,6 +189,7 @@
   function showModal(o) {
     var ov = el('modalOverlay'), box = el('modalBox');
     box.innerHTML = '';
+    box.classList.remove('qr-full');
     box.scrollTop = 0;
     function close() { ov.classList.remove('open'); box.innerHTML = ''; }
     if (o.title) {
@@ -1496,6 +1526,144 @@
     // adds one — so the end total stays e.g. 100/100, never 100/101.
     var sumQty = origTotal(p);
     el('completeTotal').textContent = sumPlaced + ' / ' + sumQty + ' pairs placed';
+    // Leaderboard score: recorded once per project, from the placing log
+    // (first pair to last pair, minus the set-and-forget breaks).
+    var rec = p.scoreId ? null : recordScore(p);
+    var entry = rec ? rec.entry : null;
+    if (!entry && p.scoreId) {
+      entry = loadLeaderboard().filter(function (s) { return s.id === p.scoreId; })[0] || null;
+    }
+    var rateEl = el('completeRate');
+    if (entry) {
+      rateEl.textContent = entry.rate.toFixed(2) + ' jeans/min • ' + fmtDuration(entry.minutes);
+      rateEl.style.display = '';
+    } else {
+      rateEl.style.display = 'none';
+    }
+    if (rec && rec.madeTop10) {
+      showModal({
+        title: 'New leaderboard score!',
+        message: 'You placed ' + rec.entry.rate.toFixed(2) + ' jeans/min — that\'s #' + rec.rank + ' on the leaderboard!',
+        buttons: [
+          { label: 'View leaderboard', primary: true, onClick: function () { showLeaderboard('complete'); } },
+          { label: 'Nice' }
+        ]
+      });
+    }
+  }
+
+  /** Break rows in Settings: two time inputs per range + delete. */
+  function renderBreakRows() {
+    var wrap = el('breakList');
+    wrap.innerHTML = '';
+    settings.breaks.forEach(function (b, i) {
+      var row = document.createElement('div');
+      row.className = 'set-row';
+      var s = document.createElement('input');
+      s.type = 'time'; s.value = b.start;
+      s.addEventListener('change', function () { setBreak(i, 'start', s.value); });
+      var dash = document.createElement('div');
+      dash.textContent = '–';
+      var e = document.createElement('input');
+      e.type = 'time'; e.value = b.end;
+      e.addEventListener('change', function () { setBreak(i, 'end', e.value); });
+      var del = document.createElement('button');
+      del.className = 'del danger';
+      del.textContent = '✕';
+      del.onclick = function () {
+        settings.breaks.splice(i, 1);
+        saveSettings();
+        renderBreakRows();
+      };
+      row.appendChild(s);
+      row.appendChild(dash);
+      row.appendChild(e);
+      row.appendChild(del);
+      wrap.appendChild(row);
+    });
+  }
+  function setBreak(i, which, v) {
+    var b = settings.breaks[i];
+    if (!b || !/^\d{2}:\d{2}$/.test(v || '')) { renderBreakRows(); return; }
+    var old = b[which];
+    b[which] = v;
+    if (toMins(b.end) <= toMins(b.start)) {
+      b[which] = old;
+      renderBreakRows();
+      toast('A break has to end after it starts');
+      return;
+    }
+    saveSettings();
+  }
+
+  /* ------------------------------------------------------- leaderboard view */
+  var leaderboardReturn = 'settings';
+  function showLeaderboard(returnTo) {
+    leaderboardReturn = returnTo || 'settings';
+    renderLeaderboard();
+    show('leaderboard');
+  }
+  function renderLeaderboard() {
+    var rows = el('leaderboardRows');
+    rows.innerHTML = '';
+    var list = loadLeaderboard();
+    if (!list.length) {
+      var d = document.createElement('div');
+      d.className = 'sub';
+      d.textContent = 'No scores yet — finish a regular pull to set your first time!';
+      rows.appendChild(d);
+      return;
+    }
+    // Highlight the most recent score (the one that just landed).
+    var newest = list.reduce(function (a, b) { return b.date > a.date ? b : a; }, list[0]);
+    list.forEach(function (s, i) {
+      var row = document.createElement('div');
+      row.className = 'trow' + (i % 2 === 1 ? ' alt' : '') + (s.id === newest.id ? ' lb-new' : '');
+      var main = document.createElement('div');
+      var r = document.createElement('div');
+      r.className = 'sz';
+      r.textContent = '#' + (i + 1) + '  ' + s.rate.toFixed(2) + ' jeans/min';
+      var sub = document.createElement('div');
+      sub.className = 'sub';
+      sub.textContent = M.projectDisplayName(new Date(s.date)) + ' • ' + s.pairs + ' pairs';
+      main.appendChild(r);
+      main.appendChild(sub);
+      var del = document.createElement('button');
+      del.className = 'del danger';
+      del.textContent = '✕';
+      del.onclick = function (ev) {
+        ev.stopPropagation();
+        showModal({
+          title: 'Delete score?',
+          message: 'Delete this ' + s.rate.toFixed(2) + ' jeans/min score from ' + M.projectDisplayName(new Date(s.date)) + '?',
+          rowButtons: true,
+          buttons: [
+            {
+              label: 'Delete', danger: true, onClick: function () {
+                saveLeaderboard(loadLeaderboard().filter(function (x) { return x.id !== s.id; }));
+                renderLeaderboard();
+              }
+            },
+            { label: 'Cancel' }
+          ]
+        });
+      };
+      row.appendChild(main);
+      row.appendChild(del);
+      rows.appendChild(row);
+    });
+  }
+
+  /** Share app: a fullscreen QR code that opens the site straight away. */
+  function showSharePopup() {
+    showModal({
+      title: 'Share JeansMixing',
+      htmlMessage: '<div class="qr-wrap"><img src="assets/share-qr.png?v=web-' + APP_VERSION +
+        '" alt="QR code — scan to open JeansMixing"></div>' +
+        '<div class="msg">Scan the code to open the app, then install it from your browser if you want it on your home screen.</div>',
+      buttons: [{ label: 'Close', primary: true }]
+    });
+    el('modalBox').classList.add('qr-full');
   }
 
   /** Quick-add: record N placements into the next N boxes. Caps at remaining. */
@@ -1746,6 +1914,94 @@
         return;
       }
     }
+  }
+
+  /* ------------------------------------------------------- leaderboard
+   * Jeans-per-minute scores for finished regular pulls. Stored on their
+   * own key, separate from the projects — deleting a project never deletes
+   * its scores. Breaks are scoring-only: they subtract from the pull's
+   * time, never from the placing itself. */
+  var LEADERBOARD_KEY = 'jmw.leaderboard.v1';
+  function loadLeaderboard() {
+    try {
+      var v = JSON.parse(localStorage.getItem(LEADERBOARD_KEY));
+      if (!Array.isArray(v)) return [];
+      return v.filter(function (s) {
+        return s && typeof s.rate === 'number' && typeof s.pairs === 'number';
+      });
+    } catch (e) { return []; }
+  }
+  function saveLeaderboard(list) {
+    try { localStorage.setItem(LEADERBOARD_KEY, JSON.stringify(list)); } catch (e) {}
+  }
+  /** First/last pair placed, from the placing log (bulk sets count too;
+      transfer records have count 0, so they never count as placements). */
+  function pullTiming(p) {
+    var first = null, last = null, pairs = 0;
+    p.placingEvents.forEach(function (e) {
+      if (!e || e.count <= 0) return;
+      pairs += e.count;
+      if (first == null || e.t < first) first = e.t;
+      if (last == null || e.t > last) last = e.t;
+    });
+    if (first == null || pairs <= 0) return null;
+    return { first: first, last: last, pairs: pairs };
+  }
+  /** Break minutes overlapping a pull window, from the set-and-forget
+      schedule (mapped onto the pull's date; only the overlapping part of
+      each range counts). */
+  function breakOverlapMinutes(first, last, breaks) {
+    var d = new Date(first);
+    var dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    var total = 0;
+    (breaks || []).forEach(function (b) {
+      var bs = dayStart + toMins(b.start) * 60000;
+      var be = dayStart + toMins(b.end) * 60000;
+      total += Math.max(0, Math.min(last, be) - Math.max(first, bs)) / 60000;
+    });
+    return total;
+  }
+  /** "2h 35m" / "1h" / "45m". */
+  function fmtDuration(mins) {
+    var m = Math.round(mins);
+    if (m < 60) return m + 'm';
+    return Math.floor(m / 60) + 'h' + (m % 60 ? ' ' + (m % 60) + 'm' : '');
+  }
+  /** Jeans-per-minute for a finished regular pull, or null when the time
+      can't be measured (no placements, or the breaks ate the whole pull). */
+  function pullScore(p) {
+    var tm = pullTiming(p);
+    if (!tm) return null;
+    var gross = (tm.last - tm.first) / 60000;
+    var net = gross - breakOverlapMinutes(tm.first, tm.last, settings.breaks);
+    if (net <= 0) return null;
+    return {
+      rate: Math.round(tm.pairs / net * 100) / 100,
+      pairs: tm.pairs,
+      minutes: Math.round(net * 10) / 10,
+      date: tm.last
+    };
+  }
+  /** Record a pull's score once (never twice for the same project), keep
+      the top 10 by rate. Returns {entry, madeTop10, rank} or null. */
+  function recordScore(p) {
+    if (p.scoreId) return null;
+    var s = pullScore(p);
+    if (!s) return null;
+    var list = loadLeaderboard();
+    var entry = {
+      id: 's' + Date.now() + '_' + Math.floor(Math.random() * 100000),
+      projectId: p.id, rate: s.rate, pairs: s.pairs, minutes: s.minutes, date: s.date
+    };
+    list.push(entry);
+    list.sort(function (a, b) { return b.rate - a.rate; });
+    var rank = list.indexOf(entry) + 1;
+    var madeTop10 = rank >= 1 && rank <= 10;
+    list = list.slice(0, 10);
+    saveLeaderboard(list);
+    p.scoreId = entry.id;
+    persist();
+    return { entry: entry, madeTop10: madeTop10, rank: rank };
   }
 
   /** Surgically removes a size's K most recent placements from the log. */
@@ -2323,6 +2579,10 @@
     xt.textContent = settings.experimental ? 'On' : 'Off';
     xt.classList.toggle('on', settings.experimental);
     el('resetWrap').style.display = locked ? 'none' : '';
+    // Breaks are app-global, not per-project — hide them on a project's
+    // settings screen.
+    el('breaksWrap').style.display = isProj ? 'none' : '';
+    renderBreakRows();
     // "Reset project" only for a finished regular-pull project: wipe the
     // placing, keep the plan and the lock.
     var rp = settingsCtx.project;
@@ -3280,6 +3540,48 @@
   }
     el('resetPlacingBtn').onclick = onResetPlacing;
     el('completeBack').onclick = function () { showProjects(); };
+    el('completeLeaderboardBtn').onclick = function () { showLeaderboard('complete'); };
+    el('leaderboardBack').onclick = function () {
+      if (leaderboardReturn === 'complete') showPlacing();
+      else showSettings();
+    };
+    el('shareAppBtn').onclick = function () { showSharePopup(); };
+    el('leaderboardBtn').onclick = function () { showLeaderboard('settings'); };
+    el('breakAddBtn').onclick = function () {
+      if (settings.breaks.length >= 6) { toast('Six breaks is plenty for one day'); return; }
+      settings.breaks.push({ start: '12:00', end: '12:15' });
+      saveSettings();
+      renderBreakRows();
+    };
+    // Swipe right in Settings opens the leaderboard; swipe left there
+    // comes back. (Buttons work too — the gesture is just the quick way.)
+    (function () {
+      var sx = null, sy = null;
+      function start(ev) {
+        var t = ev.touches && ev.touches[0];
+        if (t) { sx = t.clientX; sy = t.clientY; }
+      }
+      function end(which) {
+        return function (ev) {
+          var t = ev.changedTouches && ev.changedTouches[0];
+          if (t && sx != null && sy != null) {
+            var dx = t.clientX - sx, dy = t.clientY - sy;
+            if (Math.abs(dx) > 60 && Math.abs(dy) < 40) {
+              if (which === 'settings' && dx > 0) showLeaderboard('settings');
+              if (which === 'leaderboard' && dx < 0) {
+                if (leaderboardReturn === 'complete') showPlacing();
+                else showSettings();
+              }
+            }
+          }
+          sx = null; sy = null;
+        };
+      }
+      el('view-settings').addEventListener('touchstart', start);
+      el('view-settings').addEventListener('touchend', end('settings'));
+      el('view-leaderboard').addEventListener('touchstart', start);
+      el('view-leaderboard').addEventListener('touchend', end('leaderboard'));
+    })();
     // box detail
     el('boxBack').onclick = function () { showPlacing(); };
     // stapling
@@ -3352,7 +3654,7 @@
         title: 'Reset to defaults?',
         message: isProj
           ? 'Reset this project\'s pairs per box, flipping and bundles to the current defaults?'
-          : 'Restores pairs per box (25), bundles, quick-add buttons, UI scale and dark mode to the original settings.',
+          : 'Restores pairs per box (25), bundles, quick-add buttons, UI scale, dark mode and break times to the original settings.',
         rowButtons: true,
         buttons: [
           {

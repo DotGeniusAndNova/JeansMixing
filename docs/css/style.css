@@ -179,6 +179,13 @@ button:disabled { opacity: 0.35; }
   min-height: 2.667rem; border: 0.111rem solid var(--border); border-radius: 0.444rem;
 }
 .total-line { font-weight: bold; font-size: 1.15rem; margin: 0.667rem 0.111rem; }
+.rate-line { font-weight: bold; font-size: 1.25rem; margin: 0.333rem 0.111rem 0.667rem; color: var(--primary); }
+/* Leaderboard: the most recent score stands out. */
+.trow.lb-new { background: #FFF3B0; }
+[data-theme="dark"] .trow.lb-new { background: #4A4400; }
+/* Share popup: the QR fills the modal, crisp at any size. */
+#modalBox.qr-full { max-width: 34rem; text-align: center; }
+#modalBox.qr-full .qr-wrap img { width: 100%; max-width: 26rem; height: auto; image-rendering: pixelated; }
 
 /* Box assignment (locked screen + print) */
 .boxcard { background: var(--card); border: 0.056rem solid var(--border); border-radius: 0.556rem; padding: 0.556rem 0.667rem; margin: 0.444rem 0; }

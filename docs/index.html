@@ -15,7 +15,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-<link rel="stylesheet" href="css/style.css?v=web-v2.0.0">
+<link rel="stylesheet" href="css/style.css?v=web-v2.1.0">
 </head>
 <body>
 
@@ -126,7 +126,9 @@
     <h2>Placing complete!</h2>
     <div class="rows" id="completeRows"></div>
     <div class="total-line" id="completeTotal"></div>
+    <div class="rate-line" id="completeRate" style="display:none"></div>
     <div class="btn-row no-print">
+      <button id="completeLeaderboardBtn">&#127942; Leaderboard</button>
       <button id="completeBack">&larr; Back to project</button>
     </div>
   </div>
@@ -213,9 +215,25 @@
     </div>
     <button id="setExperimentalToggle" class="toggle">Off</button>
   </div>
+  <div id="breaksWrap">
+    <div class="set-head">Breaks</div>
+    <div class="sub" style="margin-bottom:0.25rem">Your usual break times. They only adjust the leaderboard time — placing never stops for them.</div>
+    <div id="breakList"></div>
+    <div class="btn-col no-print" style="margin-top:0.556rem">
+      <button id="breakAddBtn">+ Add break</button>
+    </div>
+  </div>
   <div class="btn-col no-print" id="installWrap" style="margin-top:1.111rem">
     <button id="installAppBtn">Install app</button>
     <div class="sub" id="installAppNote" style="margin-top:0.25rem">Add it to your home screen for offline use, no browser bar.</div>
+  </div>
+  <div class="btn-col no-print" style="margin-top:1.111rem">
+    <button id="shareAppBtn">Share app</button>
+    <div class="sub" style="margin-top:0.25rem">Show a QR code others can scan to open the app.</div>
+  </div>
+  <div class="btn-col no-print" style="margin-top:1.111rem">
+    <button id="leaderboardBtn">&#127942; Leaderboard</button>
+    <div class="sub" style="margin-top:0.25rem">Your top 10 jeans-per-minute scores. Swipe right in Settings to open it too.</div>
   </div>
   <div class="btn-col no-print" id="updateWrap" style="margin-top:1.111rem">
     <button id="checkUpdatesBtn">Check for updates</button>
@@ -228,6 +246,16 @@
   <div class="btn-col no-print" id="resetWrap" style="margin-top:1.111rem">
     <button id="resetDefaultsBtn" class="danger">Reset to defaults</button>
   </div>
+</section>
+
+<!-- Leaderboard -->
+<section id="view-leaderboard" class="view">
+  <div class="topbar no-print">
+    <button id="leaderboardBack">&larr; Back</button>
+    <div class="title">Leaderboard</div>
+  </div>
+  <div class="sub" style="margin-bottom:0.5rem">Top 10 jeans per minute — regular pull only. Tap &#10005; to delete a score.</div>
+  <div id="leaderboardRows"></div>
 </section>
 
 <!-- Manage bundles -->
@@ -334,8 +362,8 @@
 <div id="scanOverlay" class="no-print"><div id="scanBox"><div id="scanStatus">Reading your sheet…</div><div id="scanBarWrap"><div id="scanBar"></div></div></div></div>
 <div id="cropOverlay" class="no-print"><div id="cropBox"><div id="cropTitle">Place the corners on the sheet</div><div id="cropStage"><canvas id="cropCanvas"></canvas><div class="crop-handle" id="cropHandle0"></div><div class="crop-handle" id="cropHandle1"></div><div class="crop-handle" id="cropHandle2"></div><div class="crop-handle" id="cropHandle3"></div><div id="cropMag"><canvas id="cropMagCanvas" width="132" height="132"></canvas></div></div><div id="cropHint">Drag the four dots onto the corners of the sheet, then Straighten.</div><div id="cropLoadStatus" style="display:none"></div><div id="cropBtnsEdit" class="mbtns"><button id="cropStraighten" class="primary">Straighten</button><button id="cropSkipEdit">Skip crop</button></div><div id="cropBtnsPreview" class="mbtns" style="display:none"><button id="cropScanThis" class="primary">Scan this</button><button id="cropAdjust">Adjust corners</button><button id="cropSkipPreview">Skip crop</button></div></div></div>
 
-<script src="js/model.js?v=web-v2.0.0"></script>
-<script src="js/scan-parse.js?v=web-v2.0.0"></script>
-<script src="js/app.js?v=web-v2.0.0"></script>
+<script src="js/model.js?v=web-v2.1.0"></script>
+<script src="js/scan-parse.js?v=web-v2.1.0"></script>
+<script src="js/app.js?v=web-v2.1.0"></script>
 </body>
 </html>
