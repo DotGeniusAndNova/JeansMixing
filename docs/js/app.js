@@ -8,7 +8,7 @@
   var M = window.JM;
   // Single source of truth for the displayed version (Projects title).
   // Bump this with every release, alongside the ?v= cache-busters.
-  var APP_VERSION = '2.1.0';
+  var APP_VERSION = '2.2.0';
 
   function el(id) { return document.getElementById(id); }
 
@@ -55,13 +55,11 @@
       darkMode: false,
       uiScale: 1,
       experimental: false,
-      // Set-and-forget break ranges (alex's usual times). Scoring-only:
-      // they adjust the leaderboard time, never the placing itself.
-      breaks: [
-        { start: '10:00', end: '10:30' },
-        { start: '13:00', end: '13:15' },
-        { start: '15:00', end: '15:15' }
-      ]
+      // Set-and-forget break ranges. Scoring-only: they adjust the
+      // leaderboard time, never the placing itself. No breaks by default —
+      // a pull only counts breaks he actually took (set them in Settings,
+      // or per pull from the done screen's Breaks button).
+      breaks: []
     };
   }
   function loadSettings() {
@@ -85,6 +83,15 @@
       }).filter(function (b) {
         return toMins(b.end) > toMins(b.start);
       }).slice(0, 6);
+      // v2.1.0 shipped with his three usual breaks as the default; v2.2.0
+      // has no breaks by default, so a stored copy of the untouched old
+      // defaults migrates to empty (a schedule he edited stays as-is).
+      if (out.breaks.length === 3 &&
+        out.breaks[0].start === '10:00' && out.breaks[0].end === '10:30' &&
+        out.breaks[1].start === '13:00' && out.breaks[1].end === '13:15' &&
+        out.breaks[2].start === '15:00' && out.breaks[2].end === '15:15') {
+        out.breaks = [];
+      }
     }
     if (Array.isArray(s.bundles) && s.bundles.length) {
       out.bundles = s.bundles.filter(function (b) {
@@ -1365,9 +1372,22 @@
   /* ---------------------------------------------------------------- placing */
   var current = 0;
 
+  /** Review a finished pull: the placing screen, read-only — every size,
+      its history and its boxes, no edits, no undo. */
+  var reviewing = false;
+  function showPlacingReview() {
+    var p = activeProject();
+    if (!p) return;
+    reviewing = true;
+    current = 0;
+    renderPlacing();
+    show('placing');
+  }
+
   function showPlacing() {
     var p = activeProject();
     if (!p || !p.locked) return showProjects();
+    reviewing = false;
     var saved = (ui.placingCurrent || {})[p.id];
     current = typeof saved === 'number' ? saved : firstOpenSize(p);
     if (current > p.entries.length) current = firstOpenSize(p);
@@ -1481,13 +1501,20 @@
       }
     }
 
-    renderQuickAdds(placed < needed);
+    renderQuickAdds(reviewing ? false : placed < needed);
     // Undo stays enabled while anything affecting this size can be reverted
     // — including a transfer into it, even at 0 placed (e.g. a fresh
     // Any Size whose creation is the thing to undo).
-    setEnabled(el('placeUndo'), findUndoIndex(p) >= 0);
+    setEnabled(el('placeUndo'), reviewing ? false : findUndoIndex(p) >= 0);
     setEnabled(el('placeLeft'), current > 0);
     setEnabled(el('placeRight'), current < p.entries.length - 1);
+    // Review mode: the placing screen is read-only — Done, stapling and
+    // Reset are hidden outright (their handlers guard too), and Back goes
+    // to the done screen instead of the project.
+    el('placeDone').style.display = reviewing ? 'none' : '';
+    el('staplingBtn').style.display = reviewing ? 'none' : '';
+    el('resetPlacingBtn').style.display = reviewing ? 'none' : '';
+    el('placingBack').textContent = reviewing ? '\u2190 Back' : '\u2190 Project';
 
     renderTimeline(p);
   }
@@ -1552,28 +1579,43 @@
     }
   }
 
-  /** Break rows in Settings: two time inputs per range + delete. */
-  function renderBreakRows() {
-    var wrap = el('breakList');
+  /** Break rows: two time inputs per range + delete. Shared by the Settings
+      list (commit = saveSettings) and the per-pull editor (commit = noop —
+      Save assigns the edited list). */
+  function renderBreakRowsInto(wrap, list, commit) {
     wrap.innerHTML = '';
-    settings.breaks.forEach(function (b, i) {
+    if (!list.length) {
+      var none = document.createElement('div');
+      none.className = 'sub';
+      none.textContent = 'No breaks — the score uses the full pull time.';
+      wrap.appendChild(none);
+    }
+    list.forEach(function (b, i) {
       var row = document.createElement('div');
       row.className = 'set-row';
       var s = document.createElement('input');
       s.type = 'time'; s.value = b.start;
-      s.addEventListener('change', function () { setBreak(i, 'start', s.value); });
+      s.addEventListener('change', function () {
+        setBreakIn(list, i, 'start', s.value, commit, function () {
+          renderBreakRowsInto(wrap, list, commit);
+        });
+      });
       var dash = document.createElement('div');
       dash.textContent = '–';
       var e = document.createElement('input');
       e.type = 'time'; e.value = b.end;
-      e.addEventListener('change', function () { setBreak(i, 'end', e.value); });
+      e.addEventListener('change', function () {
+        setBreakIn(list, i, 'end', e.value, commit, function () {
+          renderBreakRowsInto(wrap, list, commit);
+        });
+      });
       var del = document.createElement('button');
       del.className = 'del danger';
       del.textContent = '✕';
       del.onclick = function () {
-        settings.breaks.splice(i, 1);
-        saveSettings();
-        renderBreakRows();
+        list.splice(i, 1);
+        commit();
+        renderBreakRowsInto(wrap, list, commit);
       };
       row.appendChild(s);
       row.appendChild(dash);
@@ -1582,18 +1624,21 @@
       wrap.appendChild(row);
     });
   }
-  function setBreak(i, which, v) {
-    var b = settings.breaks[i];
-    if (!b || !/^\d{2}:\d{2}$/.test(v || '')) { renderBreakRows(); return; }
+  function setBreakIn(list, i, which, v, commit, rerender) {
+    var b = list[i];
+    if (!b || !/^\d{2}:\d{2}$/.test(v || '')) { rerender(); return; }
     var old = b[which];
     b[which] = v;
     if (toMins(b.end) <= toMins(b.start)) {
       b[which] = old;
-      renderBreakRows();
+      rerender();
       toast('A break has to end after it starts');
       return;
     }
-    saveSettings();
+    commit();
+  }
+  function renderBreakRows() {
+    renderBreakRowsInto(el('breakList'), settings.breaks, saveSettings);
   }
 
   /* ------------------------------------------------------- leaderboard view */
@@ -1664,6 +1709,44 @@
       buttons: [{ label: 'Close', primary: true }]
     });
     el('modalBox').classList.add('qr-full');
+  }
+
+  /** Per-pull breaks: show this pull's breaks (its own, else the global
+      schedule) and let him adjust them — skipped a break, took longer or
+      shorter — then re-score the pull. */
+  function showProjectBreaks(p) {
+    var editing = projectBreaks(p).map(function (b) {
+      return { start: b.start, end: b.end };
+    });
+    showModal({
+      title: 'Breaks for this pull',
+      message: 'Adjust the breaks for this pull only — the score updates to match. Leave it empty if you skipped your breaks.',
+      buttons: [
+        {
+          label: 'Save', primary: true, onClick: function () {
+            p.breaks = editing;
+            persist();
+            refreshScore(p);
+          }
+        },
+        { label: 'Cancel' }
+      ]
+    });
+    var box = el('modalBox');
+    var wrap = document.createElement('div');
+    renderBreakRowsInto(wrap, editing, function () {});
+    var btns = box.querySelector('.mbtns');
+    if (btns) box.insertBefore(wrap, btns);
+    else box.appendChild(wrap);
+    var add = document.createElement('button');
+    add.textContent = '+ Add break';
+    add.onclick = function () {
+      if (editing.length >= 6) { toast('Six breaks is plenty for one day'); return; }
+      editing.push({ start: '12:00', end: '12:15' });
+      renderBreakRowsInto(wrap, editing, function () {});
+    };
+    if (btns) box.insertBefore(add, btns);
+    else box.appendChild(add);
   }
 
   /** Quick-add: record N placements into the next N boxes. Caps at remaining. */
@@ -1738,6 +1821,7 @@
     }, 1000);
   }
   function onAdd(n) {
+    if (reviewing) return;
     var p = activeProject();
     if (current > firstOpenSize(p) && !(p.aheadOk && p.aheadOk[current])) {
       warnAhead(n);
@@ -1772,6 +1856,7 @@
   }
 
   function onUndo() {
+    if (reviewing) return;
     var p = activeProject();
     var idx = findUndoIndex(p);
     if (idx < 0) return;
@@ -1822,7 +1907,8 @@
     var next = Math.max(0, Math.min(p.entries.length - 1, current + dir));
     if (next !== current) {
       current = next;
-      saveCurrent();
+      // Reviewing leaves no trace — don't move the saved placing position.
+      if (!reviewing) saveCurrent();
       renderPlacing();
     }
   }
@@ -1967,13 +2053,18 @@
     if (m < 60) return m + 'm';
     return Math.floor(m / 60) + 'h' + (m % 60 ? ' ' + (m % 60) + 'm' : '');
   }
+  /** Breaks that count for one pull: the project's own (set from the done
+      screen's Breaks button) when it has them, else the global schedule. */
+  function projectBreaks(p) {
+    return (p && Array.isArray(p.breaks)) ? p.breaks : settings.breaks;
+  }
   /** Jeans-per-minute for a finished regular pull, or null when the time
       can't be measured (no placements, or the breaks ate the whole pull). */
   function pullScore(p) {
     var tm = pullTiming(p);
     if (!tm) return null;
     var gross = (tm.last - tm.first) / 60000;
-    var net = gross - breakOverlapMinutes(tm.first, tm.last, settings.breaks);
+    var net = gross - breakOverlapMinutes(tm.first, tm.last, projectBreaks(p));
     if (net <= 0) return null;
     return {
       rate: Math.round(tm.pairs / net * 100) / 100,
@@ -2003,6 +2094,32 @@
     persist();
     return { entry: entry, madeTop10: madeTop10, rank: rank };
   }
+  /** Re-score a finished pull after its breaks changed: update its
+      leaderboard entry in place, re-sort, keep the top 10. A score that
+      falls out of the top 10 loses its listed entry (the rate line hides,
+      and recordScore won't resurrect it while scoreId is set). */
+  function refreshScore(p) {
+    var s = pullScore(p);
+    var list = loadLeaderboard();
+    var entry = null;
+    list.forEach(function (x) { if (x.id === p.scoreId) entry = x; });
+    if (!s) {
+      if (entry) saveLeaderboard(list.filter(function (x) { return x !== entry; }));
+      p.scoreId = null;
+    } else if (entry) {
+      entry.rate = s.rate; entry.pairs = s.pairs; entry.minutes = s.minutes;
+      list.sort(function (a, b) { return b.rate - a.rate; });
+      saveLeaderboard(list.slice(0, 10));
+    } else if (!p.scoreId) {
+      // No score yet — removing breaks can make an unmeasurable pull
+      // measurable, so try recording fresh.
+      recordScore(p);
+    }
+    // else: the score was deleted from the leaderboard on purpose — leave
+    // it deleted.
+    persist();
+    renderComplete(p);
+  }
 
   /** Surgically removes a size's K most recent placements from the log. */
   function removePlacements(p, sizeIdx, k) {
@@ -2029,6 +2146,7 @@
    * per-size Done popup.
    */
   function onPlacedTap() {
+    if (reviewing) return;
     var p = activeProject();
     var e = p.entries[current];
     var placed = M.replay(p).placedPerSize[current];
@@ -2105,6 +2223,7 @@
       finished size), and only the pairs not already moved are offered —
       so pressing Done twice can never transfer the same pair twice. */
   function onSizeDone() {
+    if (reviewing) return;
     var p = activeProject();
     var r = M.replay(p);
     var placed = r.placedPerSize[current];
@@ -2276,6 +2395,7 @@
   }
 
   function onResetPlacing() {
+    if (reviewing) return;
     showModal({
       title: 'Reset placing?',
       message: 'This clears all +1/+5/+10 presses, history and stapling counts ' +
@@ -3506,7 +3626,16 @@
     el('printBtn').onclick = function () { window.print(); };
     el('startPlacingBtn').onclick = function () { showPlacing(); };
     // placing
-    el('placingBack').onclick = function () { showLocked(); };
+    el('placingBack').onclick = function () {
+      if (reviewing) {
+        var rp = activeProject();
+        reviewing = false;
+        current = rp ? rp.entries.length : 0;
+        renderPlacing();
+        return;
+      }
+      showLocked();
+    };
     el('sizeBig').onclick = onSizeJump;
     el('placedView').onclick = onPlacedTap;
     el('placeUndo').onclick = onUndo;
@@ -3525,13 +3654,13 @@
       buttons: [
         {
           label: 'Review sizes', onClick: function () {
-            current = 0; saveCurrent(); renderPlacing();
+            current = 0; if (!reviewing) saveCurrent(); renderPlacing();
           }
         },
         { label: 'Preparation (coming soon)', disabled: true },
         {
           label: 'Go to current size', onClick: function () {
-            current = firstOpenSize(p); saveCurrent(); renderPlacing();
+            current = firstOpenSize(p); if (!reviewing) saveCurrent(); renderPlacing();
           }
         },
         { label: 'Cancel' }
@@ -3541,6 +3670,12 @@
     el('resetPlacingBtn').onclick = onResetPlacing;
     el('completeBack').onclick = function () { showProjects(); };
     el('completeLeaderboardBtn').onclick = function () { showLeaderboard('complete'); };
+    el('completeReviewBtn').onclick = function () { showPlacingReview(); };
+    el('completeBoxesBtn').onclick = function () { onBoxMenu(); };
+    el('completeBreaksBtn').onclick = function () {
+      var p = activeProject();
+      if (p) showProjectBreaks(p);
+    };
     el('leaderboardBack').onclick = function () {
       if (leaderboardReturn === 'complete') showPlacing();
       else showSettings();
