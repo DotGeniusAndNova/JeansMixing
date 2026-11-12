@@ -8,7 +8,7 @@
   var M = window.JM;
   // Single source of truth for the displayed version (Projects title).
   // Bump this with every release, alongside the ?v= cache-busters.
-  var APP_VERSION = '2.2.0';
+  var APP_VERSION = '2.3.0';
 
   function el(id) { return document.getElementById(id); }
 
@@ -398,8 +398,8 @@
     var n = p.entries.length, i = entry.index;
     el('entryCounter').textContent =
       i < n ? 'Entry ' + (i + 1) + ' of ' + n : (n === 0 ? 'Entry 1' : 'Entry ' + (n + 1) + ' (new)');
-    // Experimental Scan lives left of the gear; everyone else never sees it.
-    el('entryScan').style.display = settings.experimental ? '' : 'none';
+    // The camera button scans project QR codes — no longer experimental.
+    el('entryScan').style.display = '';
   }
 
   function onDigit(d) {
@@ -1093,13 +1093,208 @@
   }
 
   function onScanTap() {
-    if (!settings.experimental) return; // belt and braces: button hides too
-    if (!window.ScanParse) {
-      toast('Scanner is not loaded \u2014 reload the app and try again');
+    // QR codes only now — the old text reading (OCR) is retired.
+    startQrScanner();
+  }
+
+  /* ------------------------------------------------------------- QR scanner
+   * The entry screen's camera button scans project QR codes. Live camera,
+   * full-frame scanning (the corner guides are just a friendly target — a
+   * code anywhere in frame scans), auto-capture on detect. A photo upload
+   * stays as a fallback for when the camera can't be used. */
+  var qrStream = null, qrRaf = null, qrCanvas = null, qrScanning = false;
+  function qrOverlayOpen() { return el('qrOverlay').classList.has('open'); }
+  function qrStatus(text) { el('qrStatus').textContent = text; }
+  function stopQrScanner() {
+    qrScanning = false;
+    if (qrRaf != null) {
+      if (typeof window.cancelAnimationFrame === 'function') window.cancelAnimationFrame(qrRaf);
+      else clearTimeout(qrRaf);
+      qrRaf = null;
+    }
+    if (qrStream) {
+      qrStream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) {} });
+      qrStream = null;
+    }
+    var v = el('qrVideo');
+    if (v) {
+      if (typeof v.pause === 'function') { try { v.pause(); } catch (e) {} }
+      v.srcObject = null;
+    }
+    el('qrOverlay').classList.remove('open');
+  }
+  /** Read a QR code from a canvas 2d context. Returns the text or null. */
+  function decodeQrImageData(ctx, w, h) {
+    if (typeof jsQR === 'undefined') return null;
+    try {
+      var img = ctx.getImageData(0, 0, w, h);
+      var res = jsQR(img.data, w, h, { inversionAttempts: 'attemptBoth' });
+      return res ? res.data : null;
+    } catch (e) { return null; }
+  }
+  function qrTick() {
+    if (!qrScanning) return;
+    var v = el('qrVideo');
+    if (v && v.readyState >= 2 && v.videoWidth > 0) {
+      if (!qrCanvas) qrCanvas = document.createElement('canvas');
+      var scale = Math.min(1, 640 / v.videoWidth);
+      qrCanvas.width = Math.round(v.videoWidth * scale);
+      qrCanvas.height = Math.round(v.videoHeight * scale);
+      var ctx = qrCanvas.getContext('2d');
+      ctx.drawImage(v, 0, 0, qrCanvas.width, qrCanvas.height);
+      var data = decodeQrImageData(ctx, qrCanvas.width, qrCanvas.height);
+      if (data) {
+        stopQrScanner();
+        handleScannedText(data);
+        return;
+      }
+    }
+    qrRaf = (window.requestAnimationFrame || function (fn) { return setTimeout(fn, 200); })(qrTick);
+  }
+  function startQrScanner() {
+    qrStatus('Point the camera at the project QR code');
+    el('qrOverlay').classList.add('open');
+    ensureJsQr().then(function (ok) {
+      if (!qrOverlayOpen()) return; // cancelled while the reader loaded
+      if (!ok) {
+        qrStatus('Couldn’t load the QR reader — check your connection, or use a photo instead.');
+        return;
+      }
+      var nav = (typeof navigator !== 'undefined') ? navigator : null;
+      if (!nav || !nav.mediaDevices || !nav.mediaDevices.getUserMedia) {
+        qrStatus('This device has no camera to use here — use a photo instead.');
+        return;
+      }
+      nav.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false })
+        .then(function (stream) {
+          if (!qrOverlayOpen()) {
+            stream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) {} });
+            return;
+          }
+          qrStream = stream;
+          var v = el('qrVideo');
+          v.srcObject = stream;
+          if (typeof v.play === 'function') {
+            var pr = v.play();
+            if (pr && pr.catch) pr.catch(function () {});
+          }
+          qrScanning = true;
+          qrRaf = (window.requestAnimationFrame || function (fn) { return setTimeout(fn, 200); })(qrTick);
+        })
+        .catch(function (err) {
+          if (!qrOverlayOpen()) return;
+          var name = err && err.name;
+          if (name === 'NotAllowedError' || name === 'SecurityError') {
+            qrStatus('Camera access is blocked — allow the camera for this site, or use a photo instead.');
+          } else if (name === 'NotFoundError' || name === 'OverconstrainedError') {
+            qrStatus('No camera was found on this device — use a photo instead.');
+          } else {
+            qrStatus('The camera couldn’t start — use a photo instead.');
+          }
+        });
+    });
+  }
+  function onQrPhotoChange(ev) {
+    var files = (ev.target && ev.target.files) || [];
+    if (!files.length) return;
+    var file = files[0];
+    ev.target.value = '';
+    qrStatus('Reading the photo…');
+    ensureJsQr().then(function (ok) {
+      if (!qrOverlayOpen()) return;
+      if (!ok) {
+        qrStatus('Couldn’t load the QR reader — check your connection and try again.');
+        return;
+      }
+      readQrPhoto(file);
+    });
+  }
+  function readQrPhoto(file) {
+    if (typeof FileReader === 'undefined' || typeof Image === 'undefined') {
+      qrStatus('Photos can’t be read on this device — use the camera instead.');
       return;
     }
-    scanPages = []; // fresh session; earlier pages are discarded with it
-    showScanChooser();
+    var reader = new FileReader();
+    reader.onload = function () {
+      var img = new Image();
+      img.onload = function () {
+        try {
+          if (!qrCanvas) qrCanvas = document.createElement('canvas');
+          var scale = Math.min(1, 1000 / Math.max(img.naturalWidth, img.naturalHeight));
+          qrCanvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+          qrCanvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+          var ctx = qrCanvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, qrCanvas.width, qrCanvas.height);
+          var data = decodeQrImageData(ctx, qrCanvas.width, qrCanvas.height);
+          stopQrScanner();
+          if (data) handleScannedText(data);
+          else showQrNoCode();
+        } catch (e) {
+          stopQrScanner();
+          showQrNoCode();
+        }
+      };
+      img.onerror = function () { stopQrScanner(); showQrNoCode(); };
+      img.src = reader.result;
+    };
+    reader.onerror = function () { stopQrScanner(); showQrNoCode(); };
+    reader.readAsDataURL(file);
+  }
+  function showQrNoCode() {
+    showModal({
+      title: 'No QR code found',
+      message: 'There’s no readable project QR code in that photo. Try a clearer photo, or point the camera at the code.',
+      buttons: [
+        { label: 'Try again', primary: true, onClick: function () { startQrScanner(); } },
+        { label: 'Cancel' }
+      ]
+    });
+  }
+  /** A QR code was read (camera or photo): validate it and offer the next step. */
+  function handleScannedText(text) {
+    var res = M.decodeProjectCode(text);
+    if (res.error) {
+      showModal({
+        title: 'Invalid project',
+        message: 'This QR code isn’t a JeansMixing project. Error code: ' + res.error +
+          ' — send that code to Nova and she’ll take a look.',
+        buttons: [
+          { label: 'Try again', primary: true, onClick: function () { startQrScanner(); } },
+          { label: 'Cancel' }
+        ]
+      });
+      return;
+    }
+    var total = res.entries.reduce(function (s, e) { return s + e.qty; }, 0);
+    var shown = res.entries.slice(0, 8).map(function (e) { return M.prettySize(e); });
+    if (res.entries.length > 8) shown.push('and ' + (res.entries.length - 8) + ' more');
+    showModal({
+      title: 'Project scanned!',
+      message: res.entries.length + ' sizes, ' + total + ' pairs: ' + shown.join(', ') + '.',
+      buttons: [
+        { label: 'Create project', primary: true, onClick: function () { createScannedProject(res.entries); } },
+        { label: 'Retry', onClick: function () { startQrScanner(); } }
+      ]
+    });
+  }
+  /** A scanned project starts fresh and unlocked, at the review screen so
+      the sizes can be checked before locking. */
+  function createScannedProject(entries) {
+    var name = M.Store.uniqueName(projects, M.projectDisplayName(new Date()));
+    var p = M.Store.blankProject(name);
+    p.mode = 'regular';
+    p.pairsPerBox = settings.pairsPerBox;
+    p.flippingEnabled = settings.flippingEnabled;
+    p.bundles = cloneBundles(settings.bundles);
+    p.entries = entries.map(function (e) {
+      return e.anySize
+        ? { waist: 'Any Size', length: '', qty: e.qty, anySize: true }
+        : { waist: e.waist, length: e.length, qty: e.qty };
+    });
+    projects.push(p);
+    ui.activeId = p.id;
+    persist();
+    showReview();
   }
 
   function showScanChooser() {
@@ -1711,11 +1906,90 @@
     el('modalBox').classList.add('qr-full');
   }
 
+  /* ------------------------------------------------------------ QR libraries
+   * The QR maker (qrcode-generator) and reader (jsQR) load on demand from
+   * the same CDN the scan tools already use — small, MIT, no dependencies.
+   * Once loaded they stay loaded; the service worker caches the files for
+   * offline use afterwards. */
+  var QR_GEN_SRC = 'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js';
+  var QR_READ_SRC = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js';
+  var scriptCache = {};
+  function loadScript(src, timeoutMs) {
+    if (scriptCache[src]) return scriptCache[src];
+    scriptCache[src] = new Promise(function (resolve) {
+      var done = false;
+      function finish(v) { if (!done) { done = true; resolve(v); } }
+      var s = document.createElement('script');
+      s.src = src;
+      s.onload = function () { finish(true); };
+      s.onerror = function () { finish(false); };
+      setTimeout(function () { finish(false); }, timeoutMs || 10000);
+      document.body.appendChild(s);
+    });
+    return scriptCache[src];
+  }
+  function ensureQrGen() {
+    if (typeof qrcode !== 'undefined') return Promise.resolve(true);
+    return loadScript(QR_GEN_SRC).then(function (ok) {
+      return ok && typeof qrcode !== 'undefined';
+    });
+  }
+  function ensureJsQr() {
+    if (typeof jsQR !== 'undefined') return Promise.resolve(true);
+    return loadScript(QR_READ_SRC).then(function (ok) {
+      return ok && typeof jsQR !== 'undefined';
+    });
+  }
+
+  /** Share project: a fullscreen QR code carrying this project's sizes and
+      quantities, so another phone can scan it and copy the project. */
+  function showShareProject(p) {
+    var code = M.encodeProjectCode(p);
+    var total = p.entries.reduce(function (s, e) { return s + e.qty; }, 0);
+    showModal({
+      title: 'Share project',
+      message: p.entries.length + ' sizes, ' + total + ' pairs — scan it from another phone to copy this project.',
+      buttons: [{ label: 'Close', primary: true }]
+    });
+    el('modalBox').classList.add('qr-full');
+    var box = el('modalBox');
+    var wrap = document.createElement('div');
+    wrap.className = 'qr-wrap';
+    var wait = document.createElement('div');
+    wait.className = 'msg';
+    wait.textContent = 'Generating the QR code…';
+    wrap.appendChild(wait);
+    var btns = box.querySelector('.mbtns');
+    if (btns) box.insertBefore(wrap, btns);
+    else box.appendChild(wrap);
+    if (code.length > 2300) {
+      wait.textContent = 'Too many sizes to fit in one QR code — split the project up first.';
+      return;
+    }
+    ensureQrGen().then(function (ok) {
+      if (!ok) {
+        wait.textContent = 'Couldn’t load the QR maker — check your connection and try again.';
+        return;
+      }
+      try {
+        var qr = qrcode(0, 'M');
+        qr.addData(code);
+        qr.make();
+        var img = document.createElement('img');
+        img.src = qr.createDataURL(6, 8);
+        img.alt = 'QR code for ' + p.name;
+        wrap.innerHTML = '';
+        wrap.appendChild(img);
+      } catch (e) {
+        wait.textContent = 'Couldn’t make the QR code — this project is too big to fit in one.';
+      }
+    });
+  }
+
   /** Per-pull breaks: show this pull's breaks (its own, else the global
       schedule) and let him adjust them — skipped a break, took longer or
       shorter — then re-score the pull. */
-  function showProjectBreaks(p) {
-    var editing = projectBreaks(p).map(function (b) {
+  function showProjectBreaks(p) {    var editing = projectBreaks(p).map(function (b) {
       return { start: b.start, end: b.end };
     });
     showModal({
@@ -2703,6 +2977,8 @@
     // settings screen.
     el('breaksWrap').style.display = isProj ? 'none' : '';
     renderBreakRows();
+    // Share project only makes sense with a project open.
+    el('shareProjectWrap').style.display = isProj ? '' : 'none';
     // "Reset project" only for a finished regular-pull project: wipe the
     // placing, keep the plan and the lock.
     var rp = settingsCtx.project;
@@ -3599,6 +3875,12 @@
     // entry
     el('entryBack').onclick = function () { saveDraft(); showProjects(); };
     el('entryScan').onclick = onScanTap;
+    el('qrCancel').onclick = function () { stopQrScanner(); };
+    el('qrUsePhoto').onclick = function () {
+      var inp = el('qrFileInput');
+      if (inp.click) inp.click();
+    };
+    el('qrFileInput').addEventListener('change', onQrPhotoChange);
     el('entrySettings').onclick = function () { saveDraft(); settingsReturn = 'entry'; showSettings('project', activeProject()); };
     // settings from anywhere: project mode (read-only after lock), back where you came from
     el('reviewSettings').onclick = function () { settingsReturn = 'review'; showSettings('project', activeProject()); };
@@ -3767,6 +4049,10 @@
       toast(settings.experimental ? 'Experimental features on' : 'Experimental features off');
     };
     el('installAppBtn').onclick = onInstallApp;
+    el('shareProjectBtn').onclick = function () {
+      var p = settingsCtx.project;
+      if (p) showShareProject(p);
+    };
     el('checkUpdatesBtn').onclick = onUpdateButton;
     window.addEventListener('beforeinstallprompt', function (e) {
       e.preventDefault();

@@ -130,6 +130,44 @@
            date.getFullYear() + ' ' + h + ':' + (m < 10 ? '0' : '') + m + ' ' + ap;
   }
 
+  /* ------------------------------------------------------- project QR codes
+   * Sharing a project as a QR code: sizes + quantities packed into one
+   * short string. Format v1: "JM1|waist/length/qty|waist/length/qty|...".
+   * An "Any Size" catch-all entry encodes as-is; an empty length encodes
+   * as an empty field ("30//425"). Only the plan travels — never the
+   * placing progress, so a scanned project always starts fresh. */
+  var QR_MAX_SIZES = 200;
+  var QR_MAX_QTY = 99999;
+  function encodeProjectCode(p) {
+    return 'JM1|' + (p.entries || []).map(function (e) {
+      return (e.anySize ? 'Any Size' : e.waist) + '/' + (e.length || '') + '/' + e.qty;
+    }).join('|');
+  }
+  /** Decode a scanned string. Returns {entries} or {error: 'E1'..'E6'}:
+      E1 not a JeansMixing code, E2 unsupported version, E3 malformed entry,
+      E4 no sizes, E5 bad quantity, E6 too many sizes. */
+  function decodeProjectCode(text) {
+    if (typeof text !== 'string' || text.slice(0, 2) !== 'JM') return { error: 'E1' };
+    var parts = text.split('|');
+    if (parts[0] !== 'JM1') return { error: 'E2' };
+    var segs = parts.slice(1);
+    if (!segs.length || (segs.length === 1 && segs[0] === '')) return { error: 'E4' };
+    if (segs.length > QR_MAX_SIZES) return { error: 'E6' };
+    var entries = [];
+    for (var i = 0; i < segs.length; i++) {
+      var f = segs[i].split('/');
+      if (f.length !== 3) return { error: 'E3' };
+      var waist = f[0], length = f[1], qty = parseInt(f[2], 10);
+      if (!waist || (length && !/^\d{1,3}$/.test(length))) return { error: 'E3' };
+      if (!/^\d+$/.test(f[2]) || qty < 1 || qty > QR_MAX_QTY) return { error: 'E5' };
+      entries.push(waist === 'Any Size'
+        ? { waist: 'Any Size', length: '', qty: qty, anySize: true }
+        : { waist: waist, length: length, qty: qty });
+    }
+    if (!entries.length) return { error: 'E4' };
+    return { entries: entries };
+  }
+
   /* ------------------------------------------------------------------ store
    * Projects persist in localStorage as one JSON array (same shape as the
    * Android JSON files, plus an additive `entryDraft` for the web entry
@@ -199,6 +237,8 @@
     totalPlaced: totalPlaced,
     fmtTime: fmtTime,
     projectDisplayName: projectDisplayName,
+    encodeProjectCode: encodeProjectCode,
+    decodeProjectCode: decodeProjectCode,
     Store: Store
   };
 

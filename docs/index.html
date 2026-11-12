@@ -15,7 +15,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-<link rel="stylesheet" href="css/style.css?v=web-v2.2.0">
+<link rel="stylesheet" href="css/style.css?v=web-v2.3.0">
 </head>
 <body>
 
@@ -38,7 +38,7 @@
   <div class="topbar no-print">
     <button id="entryBack">&larr;</button>
     <div class="title" id="entryProjectName"></div>
-    <button id="entryScan" class="icon-btn" aria-label="Scan sizes">&#128247;</button>
+    <button id="entryScan" class="icon-btn" aria-label="Scan a project QR code">&#128247;</button>
     <button id="entrySettings" class="icon-btn" aria-label="Settings">&#9881;</button>
     <button id="entryDone" class="primary">Done</button>
   </div>
@@ -248,6 +248,10 @@
     <button id="resetProjectBtn" class="danger">Reset project</button>
     <div class="sub" style="margin-top:0.25rem">Clears all placing progress. The size list stays, and it stays locked.</div>
   </div>
+  <div class="btn-col no-print" id="shareProjectWrap" style="margin-top:1.111rem; display:none">
+    <button id="shareProjectBtn">Share project</button>
+    <div class="sub" style="margin-top:0.25rem">Show a QR code with this project's sizes and quantities — scan it from another phone to copy the project.</div>
+  </div>
   <div class="btn-col no-print" id="resetWrap" style="margin-top:1.111rem">
     <button id="resetDefaultsBtn" class="danger">Reset to defaults</button>
   </div>
@@ -367,8 +371,27 @@
 <div id="scanOverlay" class="no-print"><div id="scanBox"><div id="scanStatus">Reading your sheet…</div><div id="scanBarWrap"><div id="scanBar"></div></div></div></div>
 <div id="cropOverlay" class="no-print"><div id="cropBox"><div id="cropTitle">Place the corners on the sheet</div><div id="cropStage"><canvas id="cropCanvas"></canvas><div class="crop-handle" id="cropHandle0"></div><div class="crop-handle" id="cropHandle1"></div><div class="crop-handle" id="cropHandle2"></div><div class="crop-handle" id="cropHandle3"></div><div id="cropMag"><canvas id="cropMagCanvas" width="132" height="132"></canvas></div></div><div id="cropHint">Drag the four dots onto the corners of the sheet, then Straighten.</div><div id="cropLoadStatus" style="display:none"></div><div id="cropBtnsEdit" class="mbtns"><button id="cropStraighten" class="primary">Straighten</button><button id="cropSkipEdit">Skip crop</button></div><div id="cropBtnsPreview" class="mbtns" style="display:none"><button id="cropScanThis" class="primary">Scan this</button><button id="cropAdjust">Adjust corners</button><button id="cropSkipPreview">Skip crop</button></div></div></div>
 
-<script src="js/model.js?v=web-v2.2.0"></script>
-<script src="js/scan-parse.js?v=web-v2.2.0"></script>
-<script src="js/app.js?v=web-v2.2.0"></script>
+<!-- QR scanner -->
+<div id="qrOverlay" class="no-print">
+  <div id="qrBox">
+    <div id="qrStage">
+      <video id="qrVideo" playsinline muted autoplay></video>
+      <div class="qr-corner tl"></div>
+      <div class="qr-corner tr"></div>
+      <div class="qr-corner bl"></div>
+      <div class="qr-corner br"></div>
+    </div>
+    <div id="qrStatus">Point the camera at the project QR code</div>
+    <div class="mbtns">
+      <button id="qrUsePhoto">Use a photo instead</button>
+      <button id="qrCancel">Cancel</button>
+    </div>
+    <input type="file" id="qrFileInput" accept="image/*" style="display:none">
+  </div>
+</div>
+
+<script src="js/model.js?v=web-v2.3.0"></script>
+<script src="js/scan-parse.js?v=web-v2.3.0"></script>
+<script src="js/app.js?v=web-v2.3.0"></script>
 </body>
 </html>

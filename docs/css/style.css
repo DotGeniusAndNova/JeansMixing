@@ -157,6 +157,22 @@ button:disabled { opacity: 0.35; }
    dots over the photo, then a perspective warp straightens the quad. */
 #cropOverlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); align-items: flex-start; justify-content: center; z-index: 101; overflow-y: auto; }
 #cropOverlay.open { display: flex; }
+
+/* QR scanner: live camera with corner guides. The corners are only a
+   friendly target — the whole frame scans, a code anywhere in view reads. */
+#qrOverlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.85); align-items: flex-start; justify-content: center; z-index: 102; overflow-y: auto; padding: 1rem; }
+#qrOverlay.open { display: flex; }
+#qrBox { width: 100%; max-width: 30rem; margin: auto; }
+#qrStage { position: relative; width: 100%; aspect-ratio: 4/3; background: #000; border-radius: 0.778rem; overflow: hidden; }
+#qrVideo { width: 100%; height: 100%; object-fit: cover; display: block; }
+.qr-corner { position: absolute; width: 2.2rem; height: 2.2rem; border: 0.25rem solid #fff; opacity: 0.9; pointer-events: none; }
+.qr-corner.tl { top: 12%; left: 12%; border-right: none; border-bottom: none; border-top-left-radius: 0.5rem; }
+.qr-corner.tr { top: 12%; right: 12%; border-left: none; border-bottom: none; border-top-right-radius: 0.5rem; }
+.qr-corner.bl { bottom: 12%; left: 12%; border-right: none; border-top: none; border-bottom-left-radius: 0.5rem; }
+.qr-corner.br { bottom: 12%; right: 12%; border-left: none; border-top: none; border-bottom-right-radius: 0.5rem; }
+#qrStatus { color: #fff; text-align: center; margin: 0.889rem 0; line-height: 1.45; }
+#qrOverlay .mbtns { display: flex; flex-direction: column; gap: 0.556rem; }
+#qrOverlay .mbtns button { width: 100%; }
 #cropBox { background: var(--card); color: var(--ink); padding: 0.889rem; border-radius: 0.667rem; width: 94%; max-width: 30rem; margin: 1rem auto; text-align: center; }
 #cropTitle { font-size: 1.15rem; font-weight: bold; }
 #cropStage { position: relative; margin: 0.667rem auto; touch-action: none; }
