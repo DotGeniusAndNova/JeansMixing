@@ -8,7 +8,7 @@
   var M = window.JM;
   // Single source of truth for the displayed version (Projects title).
   // Bump this with every release, alongside the ?v= cache-busters.
-  var APP_VERSION = '2.3.0';
+  var APP_VERSION = '2.3.1';
 
   function el(id) { return document.getElementById(id); }
 
@@ -1103,10 +1103,16 @@
    * code anywhere in frame scans), auto-capture on detect. A photo upload
    * stays as a fallback for when the camera can't be used. */
   var qrStream = null, qrRaf = null, qrCanvas = null, qrScanning = false;
+  var qrPermTimer = null, qrLookTimer = null;
+  function clearQrTimers() {
+    if (qrPermTimer != null) { clearTimeout(qrPermTimer); qrPermTimer = null; }
+    if (qrLookTimer != null) { clearTimeout(qrLookTimer); qrLookTimer = null; }
+  }
   function qrOverlayOpen() { return el('qrOverlay').classList.has('open'); }
   function qrStatus(text) { el('qrStatus').textContent = text; }
   function stopQrScanner() {
     qrScanning = false;
+    clearQrTimers();
     if (qrRaf != null) {
       if (typeof window.cancelAnimationFrame === 'function') window.cancelAnimationFrame(qrRaf);
       else clearTimeout(qrRaf);
@@ -1152,12 +1158,12 @@
     qrRaf = (window.requestAnimationFrame || function (fn) { return setTimeout(fn, 200); })(qrTick);
   }
   function startQrScanner() {
-    qrStatus('Point the camera at the project QR code');
+    qrStatus('Starting camera…');
     el('qrOverlay').classList.add('open');
     ensureJsQr().then(function (ok) {
       if (!qrOverlayOpen()) return; // cancelled while the reader loaded
       if (!ok) {
-        qrStatus('Couldn’t load the QR reader — check your connection, or use a photo instead.');
+        qrStatus('Couldn’t load the QR reader — reload the app and try again, or use a photo instead.');
         return;
       }
       var nav = (typeof navigator !== 'undefined') ? navigator : null;
@@ -1165,8 +1171,18 @@
         qrStatus('This device has no camera to use here — use a photo instead.');
         return;
       }
+      // The browser asks for camera permission here. The prompt can sit
+      // unanswered, so say so plainly — and nudge if it still hasn't
+      // answered after a while, instead of silently hanging.
+      qrStatus('Waiting for camera permission — allow the camera when asked.');
+      qrPermTimer = setTimeout(function () {
+        if (qrOverlayOpen() && !qrStream) {
+          qrStatus('Still waiting for camera permission — if you don’t see a prompt, tap Cancel and try again.');
+        }
+      }, 15000);
       nav.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false })
         .then(function (stream) {
+          clearQrTimers();
           if (!qrOverlayOpen()) {
             stream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) {} });
             return;
@@ -1178,10 +1194,17 @@
             var pr = v.play();
             if (pr && pr.catch) pr.catch(function () {});
           }
+          qrStatus('Point the camera at the project QR code');
           qrScanning = true;
+          qrLookTimer = setTimeout(function () {
+            if (qrScanning && qrOverlayOpen()) {
+              qrStatus('Still looking — try moving closer, or hold the phone steady.');
+            }
+          }, 20000);
           qrRaf = (window.requestAnimationFrame || function (fn) { return setTimeout(fn, 200); })(qrTick);
         })
         .catch(function (err) {
+          clearQrTimers();
           if (!qrOverlayOpen()) return;
           var name = err && err.name;
           if (name === 'NotAllowedError' || name === 'SecurityError') {
@@ -1203,7 +1226,7 @@
     ensureJsQr().then(function (ok) {
       if (!qrOverlayOpen()) return;
       if (!ok) {
-        qrStatus('Couldn’t load the QR reader — check your connection and try again.');
+        qrStatus('Couldn’t load the QR reader — reload the app and try again.');
         return;
       }
       readQrPhoto(file);
@@ -1907,12 +1930,14 @@
   }
 
   /* ------------------------------------------------------------ QR libraries
-   * The QR maker (qrcode-generator) and reader (jsQR) load on demand from
-   * the same CDN the scan tools already use — small, MIT, no dependencies.
-   * Once loaded they stay loaded; the service worker caches the files for
-   * offline use afterwards. */
-  var QR_GEN_SRC = 'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js';
-  var QR_READ_SRC = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js';
+   * The QR maker (qrcode-generator) and reader (jsQR) are bundled in the
+   * app itself (js/qrcode.min.js, js/jsQR.min.js — small, MIT, no
+   * dependencies) and on the service worker's precache list, so an app
+   * update installs them. At scan time they load from the local cache —
+   * no internet needed, and a stalled download can never leave the
+   * scanner hanging the way the old CDN load did. */
+  var QR_GEN_SRC = 'js/qrcode.min.js?v=web-v' + APP_VERSION;
+  var QR_READ_SRC = 'js/jsQR.min.js?v=web-v' + APP_VERSION;
   var scriptCache = {};
   function loadScript(src, timeoutMs) {
     if (scriptCache[src]) return scriptCache[src];
