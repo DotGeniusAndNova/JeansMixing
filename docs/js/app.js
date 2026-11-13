@@ -8,7 +8,7 @@
   var M = window.JM;
   // Single source of truth for the displayed version (Projects title).
   // Bump this with every release, alongside the ?v= cache-busters.
-  var APP_VERSION = '2.3.2';
+  var APP_VERSION = '2.3.3';
 
   function el(id) { return document.getElementById(id); }
 
@@ -1564,10 +1564,14 @@
       sz.textContent = M.displaySize(e.waist, e.length);
       var q = document.createElement('div');
       q.className = 'q';
-      q.textContent = e.qty;
+      var live = M.effectiveQty(p, pos);
+      q.textContent = live;
       // The list shows the LIVE count (matching the placing screens); when
       // a transfer changed it, the original sits next to it, struck through.
-      if (e.origQty != null && e.origQty > 0 && e.qty !== e.origQty) {
+      // A shortfall counts too: the short size's qty is never rewritten,
+      // so the rolled-out pairs come off here, or it would show pairs
+      // that don't exist.
+      if (e.origQty != null && e.origQty > 0 && live !== e.origQty) {
         var orig = document.createElement('span');
         orig.className = 'qorig';
         orig.textContent = e.origQty;
@@ -2240,17 +2244,6 @@
   /** Pairs already transferred out of a size, split by direction, from its
       count:0 qtyTransfer events. Lets Done offer only what's still unmoved,
       so pressing Done twice can never transfer the same pair twice. */
-  function transferredOut(p, idx) {
-    var out = { over: 0, short: 0 };
-    p.placingEvents.forEach(function (e) {
-      if (e.size === idx && e.qtyTransfer) {
-        if (e.qtyTransfer.delta < 0) out.over += -e.qtyTransfer.delta;
-        else out.short += e.qtyTransfer.delta;
-      }
-    });
-    return out;
-  }
-
   /** The existing Any Size catch-all entry, or -1. */
   function anySizeIndex(p) {
     for (var i = 0; i < p.entries.length; i++) {
@@ -2489,7 +2482,7 @@
     // wrapper doesn't close the offer right after it opens.
     if (p.doneSizes.indexOf(current) >= 0) {
       var needed = p.entries[current].qty;
-      var excess = newVal - needed - transferredOut(p, current).over;
+      var excess = newVal - needed - M.transferredOut(p, current).over;
       if (excess > 0) {
         var target = nextUnfinishedAfter(p, current);
         if (target >= 0) {
@@ -2527,7 +2520,7 @@
     var r = M.replay(p);
     var placed = r.placedPerSize[current];
     var needed = p.entries[current].qty;
-    var tr = transferredOut(p, current);
+    var tr = M.transferredOut(p, current);
     var shortfall = needed - placed - tr.short;
     var excess = placed - needed - tr.over;
     if (shortfall > 0) {
@@ -2572,7 +2565,7 @@
    */
   function acceptShortfall(placed, needed) {
     var p = activeProject();
-    var shortfall = needed - placed - transferredOut(p, current).short;
+    var shortfall = needed - placed - M.transferredOut(p, current).short;
     p.shortOk = p.shortOk || {};
     p.shortOk[current] = true;
     if (shortfall > 0) {

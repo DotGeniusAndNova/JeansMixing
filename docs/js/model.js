@@ -135,12 +135,40 @@
    * short string. Format v1: "JM1|waist/length/qty|waist/length/qty|...".
    * An "Any Size" catch-all entry encodes as-is; an empty length encodes
    * as an empty field ("30//425"). Only the plan travels — never the
-   * placing progress, so a scanned project always starts fresh. */
+   * placing progress, so a scanned project always starts fresh — but the
+   * quantities are the CURRENT ones: a shortfall rolled forward lowers
+   * the short size (its qty is never rewritten), so the code carries the
+   * pairs that actually exist, and the total stays divisible by the box
+   * size. */
   var QR_MAX_SIZES = 200;
   var QR_MAX_QTY = 99999;
+  /** Pairs already rolled OUT of a size, split by direction: .short is a
+      shortfall (missing pairs that moved to the next size), .over is an
+      over-placement (extra pairs that turned out to belong to the next
+      size). Read from the count:0 qtyTransfer events in the placing log. */
+  function transferredOut(p, idx) {
+    var out = { over: 0, short: 0 };
+    (p.placingEvents || []).forEach(function (e) {
+      if (e.size === idx && e.qtyTransfer) {
+        if (e.qtyTransfer.delta < 0) out.over += -e.qtyTransfer.delta;
+        else out.short += e.qtyTransfer.delta;
+      }
+      // A last-size shortfall creates the Any Size catch-all instead of a
+      // transfer event — same pairs leaving, same count coming off.
+      if (e.size === idx && e.anySizeCreated != null && e.delta > 0) out.short += e.delta;
+    });
+    return out;
+  }
+  /** The pairs a size will actually place: its current qty minus any
+      shortfall already rolled forward. The receiving size's qty already
+      includes the rolled-in pairs, and an over-placement never changes
+      the source's own count, so only .short comes off. */
+  function effectiveQty(p, idx) {
+    return p.entries[idx].qty - transferredOut(p, idx).short;
+  }
   function encodeProjectCode(p) {
-    return 'JM1|' + (p.entries || []).map(function (e) {
-      return (e.anySize ? 'Any Size' : e.waist) + '/' + (e.length || '') + '/' + e.qty;
+    return 'JM1|' + (p.entries || []).map(function (e, i) {
+      return (e.anySize ? 'Any Size' : e.waist) + '/' + (e.length || '') + '/' + effectiveQty(p, i);
     }).join('|');
   }
   /** Decode a scanned string. Returns {entries} or {error: 'E1'..'E6'}:
@@ -239,6 +267,8 @@
     projectDisplayName: projectDisplayName,
     encodeProjectCode: encodeProjectCode,
     decodeProjectCode: decodeProjectCode,
+    transferredOut: transferredOut,
+    effectiveQty: effectiveQty,
     Store: Store
   };
 
