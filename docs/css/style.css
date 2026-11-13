@@ -217,6 +217,10 @@ button:disabled { opacity: 0.35; }
   background: var(--card); border: 0.111rem solid var(--brand); border-radius: 0.667rem;
   padding: 0.778rem; margin: 0.444rem 0; cursor: pointer; user-select: none; touch-action: manipulation;
 }
+/* The size being actually placed fills blue with white text, exactly like
+   a primary button — a previewed (or finished) size keeps the outline, so
+   blue always means "this is the one I'm on". */
+.size-big.current { background: var(--brand); color: #fff; }
 .placed-line {
   font-size: 1.15rem; text-align: center; margin: 0.444rem 0;
   padding: 0.556rem; border-radius: 0.556rem; background: var(--card);
@@ -225,9 +229,10 @@ button:disabled { opacity: 0.35; }
 .placed-line .over { color: var(--danger); text-decoration: underline; font-weight: bold; }
 .placed-line .short { color: var(--danger); font-weight: bold; }
 /* A total count changed by a transfer (shortfall rollover / extra pairs):
-   ONLY the "y" turns green, so alex can spot an adjusted number instantly. */
+   ONLY the "y" turns green, so alex can spot an adjusted number instantly —
+   with the original struck through after it. */
 .placed-line .yadj, #modalBox .yadj { color: #2E7D32; font-weight: bold; }
-.q .qorig { text-decoration: line-through; opacity: .65; font-size: .85em; }
+.q .qorig, .placed-line .qorig, #modalBox .qorig { text-decoration: line-through; opacity: .65; font-size: .85em; }
 [data-theme="dark"] .placed-line .yadj, [data-theme="dark"] #modalBox .yadj { color: #81C784; }
 .add-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.556rem; margin: 0.556rem 0; }
 .add-row button { min-height: 3.556rem; font-size: 1.4rem; font-weight: bold; }

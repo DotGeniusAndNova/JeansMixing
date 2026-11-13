@@ -166,9 +166,25 @@
   function effectiveQty(p, idx) {
     return p.entries[idx].qty - transferredOut(p, idx).short;
   }
+  /** The count a size is aiming for: its qty, minus a shortfall already
+      rolled out, plus an over-placement already rolled out, plus any
+      preparation recorded with nowhere to roll (prepDelta). A preparation
+      WITH a target is just a transfer, so it already shows up in .short
+      / .over — prepDelta only ever carries the no-target remainder, so
+      the terms never double-count. The placing view, the Done flow, the
+      locked review and the QR code all read this number, so the total
+      they show together always equals the pairs that actually exist. */
+  function placeTarget(p, idx) {
+    var tr = transferredOut(p, idx);
+    var prep = 0;
+    (p.placingEvents || []).forEach(function (e) {
+      if (e.size === idx && typeof e.prepDelta === 'number') prep += e.prepDelta;
+    });
+    return p.entries[idx].qty - tr.short + tr.over + prep;
+  }
   function encodeProjectCode(p) {
     return 'JM1|' + (p.entries || []).map(function (e, i) {
-      return (e.anySize ? 'Any Size' : e.waist) + '/' + (e.length || '') + '/' + effectiveQty(p, i);
+      return (e.anySize ? 'Any Size' : e.waist) + '/' + (e.length || '') + '/' + placeTarget(p, i);
     }).join('|');
   }
   /** Decode a scanned string. Returns {entries} or {error: 'E1'..'E6'}:
@@ -269,6 +285,7 @@
     decodeProjectCode: decodeProjectCode,
     transferredOut: transferredOut,
     effectiveQty: effectiveQty,
+    placeTarget: placeTarget,
     Store: Store
   };
 

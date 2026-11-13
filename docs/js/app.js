@@ -8,7 +8,7 @@
   var M = window.JM;
   // Single source of truth for the displayed version (Projects title).
   // Bump this with every release, alongside the ?v= cache-busters.
-  var APP_VERSION = '2.3.4';
+  var APP_VERSION = '2.4.0';
 
   function el(id) { return document.getElementById(id); }
 
@@ -1564,7 +1564,7 @@
       sz.textContent = M.displaySize(e.waist, e.length);
       var q = document.createElement('div');
       q.className = 'q';
-      var live = M.effectiveQty(p, pos);
+      var live = M.placeTarget(p, pos);
       q.textContent = live;
       // The list shows the LIVE count (matching the placing screens); when
       // a transfer changed it, the original sits next to it, struck through.
@@ -1648,15 +1648,19 @@
     var r = M.replay(p);
     var e = p.entries[current];
     var placed = r.placedPerSize[current];
-    var needed = e.qty;
+    var needed = placeNeeded(p, current);
 
     el('placingSubtitle').textContent = p.name + ' \u2022 Size ' + (current + 1) + ' of ' + p.entries.length;
     el('sizeBig').textContent = M.prettySize(e);
+    // Blue-filled when this is the size actually being placed; outline
+    // when it's a preview (or a finished size being looked back at).
+    el('sizeBig').classList.toggle('current', current === firstOpenSize(p));
 
     // "13 out of 24 placed (11 left)". Overplaced renders RED and UNDERLINED.
     // A confirmed shortfall (done but under) renders the whole line RED with
-    // "(0 left)". A "y" changed by a transfer renders GREEN (just the digit)
-    // in every branch — green wins over the inherited red inside .short.
+    // "(0 left)". A "y" changed by a transfer or a preparation renders GREEN
+    // with the original struck through after it, in every branch — green wins
+    // over the inherited red inside .short.
     var left = Math.max(0, needed - placed);
     var pv = el('placedView');
     pv.innerHTML = '';
@@ -1664,8 +1668,19 @@
     function yNode() {
       if (!yChanged) return document.createTextNode(String(needed));
       var ys = document.createElement('span');
-      ys.className = 'yadj';
-      ys.textContent = String(needed);
+      var yn = document.createElement('span');
+      yn.className = 'yadj';
+      yn.textContent = String(needed);
+      ys.appendChild(yn);
+      // The original, struck through — but only when there is one worth
+      // showing (an Any Size's origQty is 0, nothing to strike).
+      if (e.origQty > 0) {
+        ys.appendChild(document.createTextNode(' '));
+        var yo = document.createElement('span');
+        yo.className = 'qorig';
+        yo.textContent = String(e.origQty);
+        ys.appendChild(yo);
+      }
       return ys;
     }
     if (placed > needed) {
@@ -2192,6 +2207,12 @@
       if (current === createdIdx) { current = removed.size; saveCurrent(); }
       p.timeline.push({ size: removed.size, t: Date.now(),
         text: 'undo transfer (Any Size removed)' });
+    } else if (typeof removed.prepDelta === 'number') {
+      // Undoing a preparation recorded with nowhere to roll: the event
+      // itself was the whole change, so removing it restores the count.
+      var backTo = M.placeTarget(p, removed.size);
+      p.timeline.push({ size: removed.size, t: Date.now(),
+        text: 'undo preparation (' + M.prettySize(p.entries[removed.size]) + ' back to ' + backTo + ')' });
     } else {
       // Name the box the dealing has stepped back to: the box holding the
       // most recent remaining pair (the undone pair's predecessor).
@@ -2230,6 +2251,15 @@
     return p.entries.reduce(function (s, e) {
       return s + (e.origQty != null ? e.origQty : e.qty);
     }, 0);
+  }
+
+  /** The denominator the placing view shows for a size: while it's still
+      open, the count it's aiming for (its prepared / adjusted target);
+      once it's done, its qty — so the finished-short red line keeps
+      showing the plan ("20 out of 25 placed"), as it always has. */
+  function placeNeeded(p, idx) {
+    if (p.doneSizes.indexOf(idx) >= 0) return p.entries[idx].qty;
+    return M.placeTarget(p, idx);
   }
 
   /** First unfinished size after idx (finished sizes are never touched by
@@ -2519,10 +2549,12 @@
     var p = activeProject();
     var r = M.replay(p);
     var placed = r.placedPerSize[current];
-    var needed = p.entries[current].qty;
-    var tr = M.transferredOut(p, current);
-    var shortfall = needed - placed - tr.short;
-    var excess = placed - needed - tr.over;
+    // The target, not the raw plan: a size prepared ahead already has its
+    // shortfall / extra rolled out, so measuring against qty would count
+    // the same pairs twice (or silently swallow an extra pair).
+    var needed = M.placeTarget(p, current);
+    var shortfall = needed - placed;
+    var excess = placed - needed;
     if (shortfall > 0) {
       var dest = shortfallDestination(p, current);
       var sfMsg = 'You only placed ' + placed + ' out of ' + needed + '.';
@@ -2565,7 +2597,9 @@
    */
   function acceptShortfall(placed, needed) {
     var p = activeProject();
-    var shortfall = needed - placed - M.transferredOut(p, current).short;
+    // needed is the adjusted target (placeTarget), so the shortfall is
+    // just what's left of it — the rolled-out part is already inside it.
+    var shortfall = needed - placed;
     p.shortOk = p.shortOk || {};
     p.shortOk[current] = true;
     if (shortfall > 0) {
@@ -2655,11 +2689,13 @@
     var r = M.replay(p);
     var buttons = p.entries.map(function (e, i) {
       var placed = r.placedPerSize[i];
-      var needed = e.qty;
+      var needed = placeNeeded(p, i);
       var left = Math.max(0, needed - placed);
       var doneShort = placed < needed && p.doneSizes.indexOf(i) >= 0;
       var yHtml = (e.origQty != null && needed !== e.origQty)
-        ? '<span class="yadj">' + needed + '</span>' : String(needed);
+        ? '<span class="yadj">' + needed + '</span>' +
+          (e.origQty > 0 ? ' <span class="qorig">' + e.origQty + '</span>' : '')
+        : String(needed);
       var html = M.prettySize(e) + ' \u2014 ' +
         (placed > needed
           ? '<span class="over">' + placed + '</span> out of ' + yHtml + ' placed (' + left + ' left)'
@@ -3945,7 +3981,7 @@
     el('boxMenuBtn').onclick = onBoxMenu;
     el('staplingBtn').onclick = showStapling;
     el('reviewSizesBtn').onclick = onPlacingMenu;
-  /** Placing menu: review sizes, preparation (coming soon), go to current. */
+  /** Placing menu: review sizes, preparation, go to current. */
   function onPlacingMenu() {
     var p = activeProject();
     if (!p) return;
@@ -3957,7 +3993,7 @@
             current = 0; if (!reviewing) saveCurrent(); renderPlacing();
           }
         },
-        { label: 'Preparation (coming soon)', disabled: true },
+        { label: 'Preparation', onClick: function () { return showPreparation(); } },
         {
           label: 'Go to current size', onClick: function () {
             current = firstOpenSize(p); if (!reviewing) saveCurrent(); renderPlacing();
@@ -3966,6 +4002,147 @@
         { label: 'Cancel' }
       ]
     });
+  }
+
+  /** Preparation: set the pair count for the size being viewed, before
+      placing it — for counting a size ahead of time. The count is the
+      total the size will have (not what's placed). A shortfall or an
+      extra rolls to the next size exactly like the Done flow, but nothing
+      is placed and no box moves, so the layer/box number stays where the
+      placing actually is. The size stays on screen afterwards so alex
+      can check it and keep flipping ahead. */
+  function showPreparation() {
+    if (reviewing) return;
+    var p = activeProject();
+    if (!p) return;
+    var e = p.entries[current];
+    if (p.doneSizes.indexOf(current) >= 0) {
+      showModal({
+        title: 'Preparation',
+        message: M.prettySize(e) + ' is already done \u2014 Preparation is for sizes you haven\u2019t finished yet.',
+        buttons: [{ label: 'OK', primary: true }]
+      });
+      return false;
+    }
+    var target = M.placeTarget(p, current);
+    showModal({
+      title: 'Preparation',
+      message: M.prettySize(e) + ' \u2014 how many pairs does this size actually have?',
+      input: { value: String(target), numeric: true },
+      rowButtons: true,
+      buttons: [
+        {
+          label: 'OK', primary: true, onClick: function (api) {
+            var v = parseInt(api.input.value, 10);
+            if (isNaN(v)) return;
+            v = Math.max(0, v);
+            if (v === target) return;
+            return confirmPreparation(v, target);
+          }
+        },
+        { label: 'Cancel' }
+      ]
+    });
+    // False keeps the count popup open: the menu button's wrapper would
+    // otherwise close it the instant showPreparation returns.
+    return false;
+  }
+
+  /** Second step of Preparation: the shortfall / extra confirm, mirroring
+      the Done flow's popups. Returns false so the count popup's button
+      wrapper doesn't close this confirm right after it opens. */
+  function confirmPreparation(v, target) {
+    var p = activeProject();
+    var e = p.entries[current];
+    // change is the move in this size's own target: negative for a
+    // shortfall, positive for an extra. A transfer to the next size is
+    // the same move with the opposite sign.
+    var change = v - target;
+    if (change < 0) {
+      var shortfall = -change;
+      var dest = shortfallDestination(p, current);
+      var msg = M.prettySize(e) + ' has ' + v + ' pairs out of ' + target +
+        ' planned. The missing ' + shortfall;
+      if (dest.kind === 'size') {
+        msg += ' will be added to ' + M.prettySize(p.entries[dest.idx]) + '.';
+      } else if (dest.kind === 'create') {
+        msg += '. A new size, Any Size, will be added with the missing ' + shortfall + '.';
+      } else {
+        msg += ' will be dropped \u2014 there\u2019s no next size to add them to.';
+      }
+      msg += ' Are you sure?';
+      showModal({
+        title: 'Shortfall?',
+        message: msg,
+        rowButtons: true,
+        buttons: [
+          { label: 'Yes', primary: true, onClick: function () { applyPreparation(v, change, dest); } },
+          { label: 'No' }
+        ]
+      });
+    } else {
+      var excess = change;
+      var tgt = nextUnfinishedAfter(p, current);
+      if (tgt < 0) {
+        showModal({
+          title: 'Extra pairs',
+          message: excess + ' extra, but there\u2019s no next size \u2014 ' +
+                   'the total won\u2019t fill boxes evenly.',
+          rowButtons: true,
+          buttons: [
+            { label: 'Keep it', primary: true, onClick: function () { applyPreparation(v, change, null); } },
+            { label: 'Fix it' }
+          ]
+        });
+      } else {
+        showModal({
+          title: 'Extra pairs',
+          message: M.prettySize(e) + ' has ' + v + ' pairs, but ' + target +
+                   ' were planned \u2014 ' + excess + ' extra. Subtract ' + excess +
+                   ' from ' + M.prettySize(p.entries[tgt]) + '?',
+          rowButtons: true,
+          buttons: [
+            { label: 'Yes', primary: true, onClick: function () { applyPreparation(v, change, { kind: 'size', idx: tgt }); } },
+            { label: 'Fix it' }
+          ]
+        });
+      }
+    }
+    return false;
+  }
+
+  /** Apply a confirmed Preparation. The size itself is never marked done
+      and never advances — it stays on screen, so alex can check it and
+      keep flipping ahead. The change is recorded as one count:0 event:
+      a transfer when there is a next size (or an Any Size creation), a
+      prepDelta when there is nowhere to roll to. */
+  function applyPreparation(v, change, dest) {
+    var p = activeProject();
+    var now = Date.now();
+    var note = 'prepared as ' + v + ' pairs';
+    if (dest && dest.kind === 'size') {
+      applyTransfer(p, current, dest.idx, -change);
+      note += ' (' + (change < 0 ? (-change) + ' moved to ' : change + ' taken from ') +
+        M.prettySize(p.entries[dest.idx]) + ')';
+    } else if (dest && dest.kind === 'create') {
+      var shortfall = -change;
+      var newIdx = p.entries.length;
+      p.entries.push({ waist: 'Any Size', length: '', qty: shortfall, origQty: 0, anySize: true });
+      p.placingEvents.push({ size: current, count: 0, t: now,
+        anySizeCreated: newIdx, delta: shortfall });
+      p.timeline.push({ size: newIdx, t: now,
+        text: 'created with ' + shortfall + ' pairs (shortfall from ' + M.prettySize(p.entries[current]) + ')' });
+      note += ' (Any Size created with ' + shortfall + ')';
+    } else {
+      // No target to roll to: record the change itself, so the denominator
+      // still moves and Undo can revert it. (A transfer event can't carry
+      // this — its undo indexes the target's qty, and there is no target.)
+      p.placingEvents.push({ size: current, count: 0, t: now, prepDelta: change });
+      note += ' (no next size)';
+    }
+    p.timeline.push({ size: current, t: now, text: note });
+    persist();
+    renderPlacing();
   }
     el('resetPlacingBtn').onclick = onResetPlacing;
     el('completeBack').onclick = function () { showProjects(); };
