@@ -247,12 +247,19 @@ button:disabled { opacity: 0.35; }
   flex: 1; min-height: 4.444rem; max-height: none;
   overscroll-behavior: contain;
 }
-/* Complete screen: sizes to its own content, NOT flex:1. As flex:1 it was
-   clamped to the viewport, its overflowing buttons ended the view's scroll
-   area flush at the bottom edge (0px clearance), and the phone's bottom
-   bar covered them with no way to scroll them up. Content-sized, the
-   view's bottom padding applies below the last row (~50px at 125%). */
-#placingComplete { flex: none; }
+/* Complete screen: the size list is the scroller (topbar, heading, total,
+   rate and buttons stay pinned). The view-level scroller + sticky topbar
+   left this long list shifted on alex's phone — a row peeking above the
+   topbar, bottom buttons unreachable (2.3.3) — the same failure the
+   review/locked views already fixed with an internal scroller. */
+#placingComplete {
+  display: flex; flex-direction: column;
+  flex: 1; min-height: 0;
+}
+#completeRows {
+  flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden;
+  touch-action: pan-y; -webkit-overflow-scrolling: touch;
+}
 .timeline div { padding: 0.278rem 0; border-bottom: 0.056rem solid #f0f0f0; font-size: 0.95rem; }
 .timeline div:last-child { border-bottom: none; }
 .reset-link {
