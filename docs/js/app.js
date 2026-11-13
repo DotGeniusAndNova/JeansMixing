@@ -8,7 +8,7 @@
   var M = window.JM;
   // Single source of truth for the displayed version (Projects title).
   // Bump this with every release, alongside the ?v= cache-busters.
-  var APP_VERSION = '2.3.1';
+  var APP_VERSION = '2.3.2';
 
   function el(id) { return document.getElementById(id); }
 
@@ -1108,7 +1108,7 @@
     if (qrPermTimer != null) { clearTimeout(qrPermTimer); qrPermTimer = null; }
     if (qrLookTimer != null) { clearTimeout(qrLookTimer); qrLookTimer = null; }
   }
-  function qrOverlayOpen() { return el('qrOverlay').classList.has('open'); }
+  function qrOverlayOpen() { return el('qrOverlay').classList.contains('open'); }
   function qrStatus(text) { el('qrStatus').textContent = text; }
   function stopQrScanner() {
     qrScanning = false;
