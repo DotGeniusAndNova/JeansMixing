@@ -8,7 +8,7 @@
   var M = window.JM;
   // Single source of truth for the displayed version (Projects title).
   // Bump this with every release, alongside the ?v= cache-busters.
-  var APP_VERSION = '2.4.0';
+  var APP_VERSION = '2.4.1';
 
   function el(id) { return document.getElementById(id); }
 
@@ -438,10 +438,11 @@
   }
 
   function tapField(f) {
-    // Tapping the waist box clears the length box too, so fixing e.g.
-    // 33 x 03 to 34 x 30 flows straight through the way he normally types.
-    // (Trade: a length that was already right has to be retyped.)
-    if (f === 0) { entry.waist = ''; entry.length = ''; }
+    // Tapping the waist box clears the length AND quantity boxes too, so
+    // fixing e.g. 33 x 03 to 34 x 30 flows straight through the way he
+    // normally types. (Trade: a length or quantity that was already right
+    // has to be retyped.)
+    if (f === 0) { entry.waist = ''; entry.length = ''; entry.qty = ''; }
     else if (f === 1) entry.length = '';
     else entry.qty = '';
     entry.focused = f;
@@ -3829,32 +3830,46 @@
   /* Multi-touch pad: presses commit in touch-START order, no matter the lift
      order. Each finger's press is queued on pointerdown; the queue flushes
      head-first on pointerup/cancel, so the first finger down always wins.
-     Handles any number of simultaneous touches. */
-  var padQueue = []; // [{pid, elm, run, done}]
+     Handles any number of simultaneous touches. A press can also carry a
+     second digit (item.second): a drag from one digit key to another inputs
+     both digits when it flushes. */
+  var padQueue = []; // [{pid, elm, run, done, second?, liftElm?}]
 
   function padFlush() {
     while (padQueue.length && padQueue[0].done) {
       var item = padQueue.shift();
       item.elm.classList.remove('pressed');
-      item.run();
+      item.run(item);
       item.elm._padCommitAt = Date.now();
     }
   }
 
   /* Release: a press only counts if the finger is still on its button —
      sliding off cancels it (nothing commits, nothing stays highlighted).
+     Except a drag from one digit key to another: lifting on a different
+     digit key inputs both digits, so 3 slid to 4 enters "34".
      pointercancel always cancels. */
   function padRelease(pid, x, y) {
     for (var i = 0; i < padQueue.length; i++) {
       var item = padQueue[i];
       if (item.pid !== pid) continue;
       item.elm.classList.remove('pressed');
+      // The lift-target key stops being highlighted, whatever happens next.
+      if (item.liftElm) { item.liftElm.classList.remove('pressed'); item.liftElm = null; }
       var onButton = false;
+      var liftDigit = null;
       if (x !== undefined) {
         var t = document.elementFromPoint(x, y);
         onButton = !!t && item.elm.contains(t);
+        if (!onButton && t && typeof t._padDigit === 'string' &&
+            typeof item.elm._padDigit === 'string' && t._padDigit !== item.elm._padDigit) {
+          liftDigit = t._padDigit;
+          // Guard the lift key against a synthesized click re-entering it.
+          t._padCommitAt = Date.now();
+        }
       }
-      if (onButton) {
+      if (onButton || liftDigit !== null) {
+        if (liftDigit !== null) item.second = liftDigit;
         item.done = true;
       } else {
         padQueue.splice(i, 1); // slid off (or cancelled): the press never happened
@@ -3890,6 +3905,8 @@
     document.addEventListener('pointerup', function (e) { padRelease(e.pointerId, e.clientX, e.clientY); });
     document.addEventListener('pointercancel', function (e) { padRelease(e.pointerId); });
     // Live pressed feedback while sliding: leaving the button un-highlights it.
+    // While dragging from a digit key, the digit key under the finger lights
+    // up as the would-be second digit.
     document.addEventListener('pointermove', function (e) {
       if (!padQueue.length) return;
       for (var i = 0; i < padQueue.length; i++) {
@@ -3897,6 +3914,11 @@
         if (item.pid !== e.pointerId || item.done) continue;
         var t = document.elementFromPoint(e.clientX, e.clientY);
         item.elm.classList.toggle('pressed', !!t && item.elm.contains(t));
+        var lift = null;
+        if (typeof item.elm._padDigit === 'string' && t && typeof t._padDigit === 'string' && t !== item.elm) lift = t;
+        if (item.liftElm && item.liftElm !== lift) item.liftElm.classList.remove('pressed');
+        item.liftElm = lift;
+        if (lift) lift.classList.add('pressed');
       }
     });
     // projects
@@ -3978,7 +4000,14 @@
     el('qtyField').onclick = function () { tapField(2); };
     var digits = ['pad0', 'pad1', 'pad2', 'pad3', 'pad4', 'pad5', 'pad6', 'pad7', 'pad8', 'pad9'];
     digits.forEach(function (id, d) {
-      wirePadButton(el(id), function () { onDigit(String(d)); });
+      var elm = el(id);
+      // The digit this key inputs — padRelease reads it to spot a drag
+      // from one digit key to another.
+      elm._padDigit = String(d);
+      wirePadButton(elm, function (item) {
+        onDigit(String(d));
+        if (item && item.second) onDigit(item.second);
+      });
     });
     wirePadButton(el('padBack'), onBackspace);
     wirePadButton(el('padEnter'), onEntryNext);
