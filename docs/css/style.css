@@ -118,7 +118,7 @@ button:disabled { opacity: 0.35; }
 .qty-wrap { display: flex; align-items: center; justify-content: center; gap: 0.667rem; margin: 0.333rem 0 0.556rem; }
 .qty-wrap label { font-size: 1.1rem; color: var(--muted); }
 .pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.556rem; margin-top: 0.333rem; }
-.pad button { min-height: 3.556rem; font-size: 1.5rem; font-weight: bold; }
+.pad button { min-height: calc(3.556rem * var(--pad-scale, 1)); font-size: 1.5rem; font-weight: bold; }
 .pad button.enter { background: var(--brand); color: #fff; }
 .pad button.pressed { background: #C5CAE9; }
 .pad button.enter.pressed { background: var(--brand-dark); color: #fff; }

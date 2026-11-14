@@ -54,6 +54,10 @@
       quickAdds: [1, 5, 10],
       darkMode: false,
       uiScale: 1,
+      // Number pad height, as a multiple of its normal key height (1 = as
+      // it is now). The pad already spans the full width; this only makes
+      // the keys taller or shorter.
+      padScale: 1,
       experimental: false,
       // Set-and-forget break ranges. Scoring-only: they adjust the
       // leaderboard time, never the placing itself. No breaks by default —
@@ -72,6 +76,7 @@
       quickAdds: d.quickAdds,
       darkMode: s.darkMode === true,
       uiScale: (s.uiScale > 0) ? Math.min(2, Math.max(0.5, s.uiScale)) : d.uiScale,
+      padScale: (s.padScale > 0) ? Math.min(2, Math.max(0.5, s.padScale)) : d.padScale,
       experimental: s.experimental === true,
       breaks: d.breaks
     };
@@ -123,6 +128,7 @@
     // content genuinely means less scrolling. (CSS `zoom` can't do this: it just
     // shrinks the box inside an unchanged viewport — the v1.2.1/v1.2.2 bug.)
     document.documentElement.style.setProperty('--scale', settings.uiScale);
+    document.documentElement.style.setProperty('--pad-scale', settings.padScale);
     document.documentElement.setAttribute('data-theme', settings.darkMode ? 'dark' : 'light');
     var meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.setAttribute('content', settings.darkMode ? '#121212' : '#3949AB');
@@ -1711,6 +1717,15 @@
     // only when the last pair is placed (e.g. 75 of 750 reads "(10%)").
     var placedTotal = r.placedPerSize.reduce(function (a, b) { return a + b; }, 0);
     var pctTxt = ' (' + Math.floor(placedTotal / Math.max(1, origTotal(p)) * 100) + '%)';
+    // A ⚠️ when pairs sit on a size ahead of the one being worked — placed
+    // by the manual count or by Override — so it's obvious something was
+    // jumped to. It clears on its own when the work catches up to that
+    // size, or when those pairs are undone.
+    var ahead = false;
+    for (var i = firstOpenSize(p) + 1; i < r.placedPerSize.length; i++) {
+      if (r.placedPerSize[i] > 0) { ahead = true; break; }
+    }
+    if (ahead) pctTxt += ' ⚠️';
     var blv = el('bundleLayerView');
     var pFlip = projectFlip(p), pBundles = projectBundles(p);
     var fc = el('flipCue');
@@ -3023,6 +3038,10 @@
     dt.textContent = settings.darkMode ? 'On' : 'Off';
     dt.classList.toggle('on', settings.darkMode);
     el('scaleVal').textContent = Math.round(settings.uiScale * 100) + '%';
+    el('padScaleVal').textContent = Math.round(settings.padScale * 100) + '%';
+    // The pad-height scaler only appears while the number pad is showing —
+    // settings opened from the entry screen.
+    el('padScaleWrap').style.display = settingsReturn === 'entry' ? '' : 'none';
     var xt = el('setExperimentalToggle');
     xt.textContent = settings.experimental ? 'On' : 'Off';
     xt.classList.toggle('on', settings.experimental);
@@ -3072,6 +3091,15 @@
   function bumpScale(d) {
     var v = Math.round((settings.uiScale + d) * 100) / 100;
     settings.uiScale = Math.min(2, Math.max(0.5, v));
+    saveSettings();
+    renderSettings();
+  }
+
+  // Number pad height, same stepper and range as the UI scale. A global
+  // setting like uiScale — saveSettings applies it live via --pad-scale.
+  function bumpPadScale(d) {
+    var v = Math.round((settings.padScale + d) * 100) / 100;
+    settings.padScale = Math.min(2, Math.max(0.5, v));
     saveSettings();
     renderSettings();
   }
@@ -4237,6 +4265,8 @@
     };
     el('scaleDown').onclick = function () { bumpScale(-0.05); };
     el('scaleUp').onclick = function () { bumpScale(0.05); };
+    el('padScaleDown').onclick = function () { bumpPadScale(-0.05); };
+    el('padScaleUp').onclick = function () { bumpPadScale(0.05); };
     el('setExperimentalToggle').onclick = function () {
       settings.experimental = !settings.experimental;
       saveSettings();
