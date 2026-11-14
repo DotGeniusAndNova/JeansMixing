@@ -131,7 +131,7 @@
     document.documentElement.style.setProperty('--pad-scale', settings.padScale);
     document.documentElement.setAttribute('data-theme', settings.darkMode ? 'dark' : 'light');
     var meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute('content', settings.darkMode ? '#121212' : '#3949AB');
+    if (meta) meta.setAttribute('content', settings.darkMode ? '#121212' : '#FAFAFA');
   }
   function bundleLayersTotal(t) {
     return (t || settings).bundles.reduce(function (s, b) { return s + b.layers; }, 0);

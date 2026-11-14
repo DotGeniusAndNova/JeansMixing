@@ -3,17 +3,17 @@
  * BUMP WITH EVERY RELEASE: the CACHE name and the ?v= on the versioned
  * assets below must match the current release (see index.html).
  */
-var CACHE = 'jeansmixing-v2-4-1';
+var CACHE = 'jeansmixing-v2-4-1a';
 var ASSETS = [
   './',
   './index.html',
-  './css/style.css?v=web-v2.4.1',
-  './js/model.js?v=web-v2.4.1',
-  './js/scan-parse.js?v=web-v2.4.1',
-  './js/app.js?v=web-v2.4.1',
-  './js/jsQR.min.js?v=web-v2.4.1',
-  './js/qrcode.min.js?v=web-v2.4.1',
-  './assets/share-qr.png?v=web-v2.4.1',
+  './css/style.css?v=web-v2.4.1a',
+  './js/model.js?v=web-v2.4.1a',
+  './js/scan-parse.js?v=web-v2.4.1a',
+  './js/app.js?v=web-v2.4.1a',
+  './js/jsQR.min.js?v=web-v2.4.1a',
+  './js/qrcode.min.js?v=web-v2.4.1a',
+  './assets/share-qr.png?v=web-v2.4.1a',
   './manifest.webmanifest',
   './icons/icon-192.png',
   './icons/icon-512.png',
