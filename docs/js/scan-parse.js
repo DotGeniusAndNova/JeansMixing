@@ -265,10 +265,22 @@
     if (!cands.length) return { found: true, qty: null, sizeText: s.text, box: { x0: s.x0, y0: s.y0, x1: s.x1, y1: s.y1 } };
     var first = cands[0];
     var box = unionBox(s, first);
+    /* The quantity token's own box, apart from the union: lookupPages
+       uses the page's quantity boxes to find the quantity column, so
+       a row whose quantity the engine missed entirely can still have
+       its crop widened to where the number should be. */
+    var qtyBox = { x0: first.x0, y0: first.y0, x1: first.x1, y1: first.y1 };
     if (/^\d+$/.test(first.text)) {
-      return { found: true, qty: parseInt(first.text, 10), exact: true, raw: first.text, box: box };
+      return { found: true, qty: parseInt(first.text, 10), exact: true, raw: first.text, box: box, qtyBox: qtyBox };
     }
-    return { found: true, qty: parseInt(normalizeQtyToken(first.text), 10), exact: false, raw: first.text, box: box };
+    return { found: true, qty: parseInt(normalizeQtyToken(first.text), 10), exact: false, raw: first.text, box: box, qtyBox: qtyBox };
+  }
+
+  /* Median of a list of numbers (for the quantity column's right edge). */
+  function median(ns) {
+    if (!ns.length) return null;
+    var s = ns.slice().sort(function (a, b) { return a - b; });
+    return s[Math.floor(s.length / 2)];
   }
 
   /* Run the lookup over pages (each a list of OCR items, in page order).
@@ -279,7 +291,12 @@
      flagged qty-0 row for alex to confirm; a missing CORE size becomes
      a flagged 'missing' row; a missing OPTIONAL size is skipped. */
   function lookupPages(pages) {
-    var rows = [];
+    /* Pass 1: find every size (as before) and, per page, the quantity
+       column — the median right edge of the quantities that WERE read.
+       The quantities are right-aligned on the sheet, so that edge is
+       stable across digit counts (on alex's Jeds page 2: 625–641). */
+    var found = [];
+    var qtyRight = {}; // page index -> [qtyBox.x1, ...]
     gridSizes().forEach(function (g) {
       var sizeText = displaySize(g.waist, g.length);
       var r = null, rPage = -1;
@@ -290,6 +307,21 @@
           if (rr.qty !== null) break;
         }
       }
+      found.push({ g: g, sizeText: sizeText, r: r, rPage: rPage });
+      if (r && r.qtyBox) {
+        (qtyRight[rPage] = qtyRight[rPage] || []).push(r.qtyBox.x1);
+      }
+    });
+    /* Pass 2: build the rows. A row whose quantity the engine missed
+       entirely (the lone-0 weak spot: no token beside the size at all)
+       gets its crop widened from the size out to the page's quantity
+       column, so the single-size review shows the spot where the
+       number should be instead of just the size. A page with no
+       quantities read at all falls back to twice the size's width —
+       roughly the gap on his sheets. */
+    var rows = [];
+    found.forEach(function (f) {
+      var g = f.g, sizeText = f.sizeText, r = f.r, rPage = f.rPage;
       if (!r) {
         if (!g.optional) {
           rows.push({ flag: 'missing', raw: sizeText, waist: g.waist, length: g.length });
@@ -299,8 +331,14 @@
       /* Every found row carries where it was read (page + box), so the
          single-size review can crop it out of the photo. A missing row
          has neither — the size wasn't on any page. */
+      var box = r.box;
+      if (r.qty === null && box) {
+        var col = median(qtyRight[rPage] || []);
+        var reach = (col !== null) ? col : (box.x1 + 2 * (box.x1 - box.x0));
+        box = { x0: box.x0, y0: box.y0, x1: Math.max(box.x1, reach), y1: box.y1 };
+      }
       if (r.qty === null) {
-        rows.push({ flag: 'unreadable', raw: r.sizeText || sizeText, waist: g.waist, length: g.length, qty: 0, box: r.box, page: rPage });
+        rows.push({ flag: 'unreadable', raw: r.sizeText || sizeText, waist: g.waist, length: g.length, qty: 0, box: box, page: rPage });
         return;
       }
       if (r.qty === 0) {

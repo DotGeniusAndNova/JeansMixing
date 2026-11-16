@@ -8,7 +8,7 @@
   var M = window.JM;
   // Single source of truth for the displayed version (Projects title).
   // Bump this with every release, alongside the ?v= cache-busters.
-  var APP_VERSION = '2.9.0';
+  var APP_VERSION = '2.9.1';
 
   function el(id) { return document.getElementById(id); }
 
