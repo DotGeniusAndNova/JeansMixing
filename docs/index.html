@@ -11,7 +11,7 @@
 <!-- ?v= cache-buster: bump every release so phones fetch fresh files -->
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-<link rel="stylesheet" href="css/style.css?v=web-v2.6.0">
+<link rel="stylesheet" href="css/style.css?v=web-v2.7.0">
 </head>
 <body>
 
@@ -220,12 +220,9 @@
       <button id="padScaleUp" aria-label="taller keys">+</button>
     </div>
   </div>
-  <div class="set-row">
-    <div>
-      <div class="set-label">Experimental features</div>
-      <div class="sub">Try in-progress features as they arrive</div>
-    </div>
-    <button id="setExperimentalToggle" class="toggle">Off</button>
+  <div class="btn-col no-print" style="margin-top:1.111rem">
+    <button id="advancedSettingsBtn">Advanced settings</button>
+    <div class="sub" style="margin-top:0.25rem">Photo processing engine, experimental features.</div>
   </div>
   <div id="breaksWrap">
     <div class="set-head">Breaks</div>
@@ -261,6 +258,28 @@
   </div>
   <div class="btn-col no-print" id="resetWrap" style="margin-top:1.111rem">
     <button id="resetDefaultsBtn" class="danger">Reset to defaults</button>
+  </div>
+</section>
+
+<!-- Advanced settings -->
+<section id="view-advanced" class="view">
+  <div class="topbar no-print">
+    <button id="advancedBack">&larr; Back</button>
+    <div class="title">Advanced settings</div>
+  </div>
+  <div class="set-row">
+    <div>
+      <div class="set-label">Photo processing engine</div>
+      <div class="sub" id="scanEngineSub">WebGPU uses the phone&rsquo;s graphics chip and is faster on most phones; WebAssembly works everywhere.</div>
+    </div>
+    <button id="scanEngineBtn" class="toggle">WebGPU</button>
+  </div>
+  <div class="set-row">
+    <div>
+      <div class="set-label">Experimental features</div>
+      <div class="sub">Try in-progress features as they arrive</div>
+    </div>
+    <button id="setExperimentalToggle" class="toggle">Off</button>
   </div>
 </section>
 
@@ -411,8 +430,8 @@
   </div>
 </div>
 
-<script src="js/model.js?v=web-v2.6.0"></script>
-<script src="js/scan-parse.js?v=web-v2.6.0"></script>
-<script src="js/app.js?v=web-v2.6.0"></script>
+<script src="js/model.js?v=web-v2.7.0"></script>
+<script src="js/scan-parse.js?v=web-v2.7.0"></script>
+<script src="js/app.js?v=web-v2.7.0"></script>
 </body>
 </html>

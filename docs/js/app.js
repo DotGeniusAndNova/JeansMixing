@@ -8,7 +8,7 @@
   var M = window.JM;
   // Single source of truth for the displayed version (Projects title).
   // Bump this with every release, alongside the ?v= cache-busters.
-  var APP_VERSION = '2.6.0';
+  var APP_VERSION = '2.7.0';
 
   function el(id) { return document.getElementById(id); }
 
@@ -59,6 +59,11 @@
       // the keys taller or shorter.
       padScale: 1,
       experimental: false,
+      // Which engine the text reader runs on: 'webgpu' (the phone's
+      // graphics chip — faster on most phones) or 'wasm' (one CPU core,
+      // works everywhere). WebGPU is the default; if it doesn't work on
+      // a phone the app falls back to WebAssembly on its own.
+      scanEngine: 'webgpu',
       // Set-and-forget break ranges. Scoring-only: they adjust the
       // leaderboard time, never the placing itself. No breaks by default —
       // a pull only counts breaks he actually took (set them in Settings,
@@ -78,6 +83,7 @@
       uiScale: (s.uiScale > 0) ? Math.min(2, Math.max(0.5, s.uiScale)) : d.uiScale,
       padScale: (s.padScale > 0) ? Math.min(2, Math.max(0.5, s.padScale)) : d.padScale,
       experimental: s.experimental === true,
+      scanEngine: s.scanEngine === 'wasm' ? 'wasm' : 'webgpu',
       breaks: d.breaks
     };
     if (Array.isArray(s.breaks)) {
@@ -188,7 +194,7 @@
   applySettings();
 
   /* ------------------------------------------------------------ navigation */
-  var VIEWS = ['projects', 'entry', 'review', 'locked', 'placing', 'box', 'stapling', 'settings', 'bundles',
+  var VIEWS = ['projects', 'entry', 'review', 'locked', 'placing', 'box', 'stapling', 'settings', 'advanced', 'bundles',
     'mixsizes', 'mixcapacity', 'mixboxes', 'mixplacing', 'mixbox', 'leaderboard'];
   // Where Back from Settings should return to ('projects' or 'entry').
   var settingsReturn = 'projects';
@@ -268,6 +274,7 @@
       case 'box': showPlacing(); return true;
       case 'stapling': showPlacing(); return true;
       case 'settings': backFromSettings(); return true;
+      case 'advanced': showSettings(); return true;
       case 'bundles': onBundlesDone(); return true;
       case 'mixsizes': showProjects(); return true;
       case 'mixcapacity': showMixSizes(); return true;
@@ -1481,7 +1488,15 @@
    * overlay, view) and only at the home screen does the next back
    * press exit. Tapping the dim area outside a popup closes it too.
    * The on-screen Back buttons all call the same goBackView the
-   * gesture uses, so there is one source of truth. */
+   * gesture uses, so there is one source of truth.
+   * v2.7.0: the text reader can run on WebGPU (the phone's graphics
+   * chip) or WebAssembly (one CPU core), picked in a new Advanced
+   * settings screen under Settings — which is also where the
+   * experimental-features toggle moved. WebGPU is the default; if a
+   * phone has no WebGPU adapter the create fails fast and the app
+   * falls back to WebAssembly on its own. (Includes v2.6.0: this
+   * branch is built on it, so pushing v2.7.0 ships the back work
+   * too.) */
   var PADDLE_READ_SRC = 'js/paddleocr/paddleocr.min.js?v=web-v' + APP_VERSION;
   var textPages = []; // per-page OCR item lists, in page order
   var textReading = false;
@@ -1516,23 +1531,41 @@
     } catch (e) { return ''; }
   }
 
+  /** Which engine the loaded reader actually runs on ('webgpu' |
+      'wasm' | null) — the Advanced screen shows it, so the experiment
+      is legible: if WebGPU wasn't available, it says so. */
+  var paddleBackendUsed = null;
+  /** Create the reader with one backend. WebGPU needs no extra files —
+      its backend lives inside the vendored JSEP wasm already. */
+  function createPaddleOcr(backend) {
+    var base = appBaseUrl();
+    var v = '?v=web-v' + APP_VERSION;
+    return PaddleOCRBundle.PaddleOCR.create({
+      lang: 'en',
+      textDetectionModelName: 'PP-OCRv6_tiny_det',
+      textDetectionModelAsset: { url: base + 'js/paddleocr/tiny_det.tar' + v },
+      textRecognitionModelName: 'PP-OCRv6_tiny_rec',
+      textRecognitionModelAsset: { url: base + 'js/paddleocr/tiny_rec.tar' + v },
+      ortOptions: { backend: backend, wasmPaths: base + 'js/ort/', numThreads: 1, simd: true }
+    });
+  }
   /** The OCR engine, created once and reused. The models and the wasm
       runtime are local files; the first creation downloads the wasm
-      (about 30MB, once — the service worker caches it after). */
+      (about 30MB, once — the service worker caches it after). WebGPU
+      is tried first when chosen; if the phone has no WebGPU adapter
+      the create fails fast and clean, and WebAssembly takes over
+      instead of failing the scan. */
   function ensurePaddleOcr() {
     if (paddleOcrPromise) return paddleOcrPromise;
     paddleOcrPromise = ensurePaddle().then(function (ok) {
       if (!ok) throw new Error('paddle load failed');
-      var base = appBaseUrl();
-      var v = '?v=web-v' + APP_VERSION;
-      return PaddleOCRBundle.PaddleOCR.create({
-        lang: 'en',
-        textDetectionModelName: 'PP-OCRv6_tiny_det',
-        textDetectionModelAsset: { url: base + 'js/paddleocr/tiny_det.tar' + v },
-        textRecognitionModelName: 'PP-OCRv6_tiny_rec',
-        textRecognitionModelAsset: { url: base + 'js/paddleocr/tiny_rec.tar' + v },
-        ortOptions: { backend: 'wasm', wasmPaths: base + 'js/ort/', numThreads: 1, simd: true }
-      });
+      var want = settings.scanEngine === 'wasm' ? 'wasm' : 'webgpu';
+      var used = want;
+      return createPaddleOcr(want).catch(function (e) {
+        if (want !== 'webgpu') throw e;
+        used = 'wasm';
+        return createPaddleOcr('wasm');
+      }).then(function (ocr) { paddleBackendUsed = used; return ocr; });
     }).catch(function (e) { paddleOcrPromise = null; throw e; });
     return paddleOcrPromise;
   }
@@ -3449,9 +3482,6 @@
     // The pad-height scaler only appears while the number pad is showing —
     // settings opened from the entry screen.
     el('padScaleWrap').style.display = settingsReturn === 'entry' ? '' : 'none';
-    var xt = el('setExperimentalToggle');
-    xt.textContent = settings.experimental ? 'On' : 'Off';
-    xt.classList.toggle('on', settings.experimental);
     el('resetWrap').style.display = locked ? 'none' : '';
     // Breaks are app-global, not per-project — hide them on a project's
     // settings screen.
@@ -3468,6 +3498,47 @@
     el('resetProjectWrap').style.display = finished ? '' : 'none';
     renderUpdate();
   }
+  /* ------------------------------------------------------ advanced settings
+   * A separate screen under Settings for the things only alex (and Nova)
+   * touch: the photo processing engine and the experimental-features
+   * toggle. Reached from Settings; Back returns to Settings. */
+  function showAdvanced() {
+    renderAdvanced();
+    show('advanced');
+  }
+  function renderAdvanced() {
+    var b = el('scanEngineBtn');
+    b.textContent = settings.scanEngine === 'wasm' ? 'WebAssembly' : 'WebGPU';
+    el('scanEngineSub').textContent = paddleBackendUsed
+      ? (paddleBackendUsed === 'webgpu'
+        ? 'WebGPU is running the reader on this phone.'
+        : 'WebGPU wasn\u2019t available on this phone, so WebAssembly is running the reader.')
+      : 'WebGPU uses the phone\u2019s graphics chip and is faster on most phones; WebAssembly works everywhere.';
+    var xt = el('setExperimentalToggle');
+    xt.textContent = settings.experimental ? 'On' : 'Off';
+    xt.classList.toggle('on', settings.experimental);
+  }
+  function showEngineChooser() {
+    var cur = settings.scanEngine;
+    showModal({
+      title: 'Photo processing engine',
+      message: 'How the text reader runs. WebGPU uses the phone\u2019s graphics chip and is faster on most phones; WebAssembly runs on one CPU core and works everywhere. If WebGPU doesn\u2019t work on this phone, the app falls back to WebAssembly on its own.',
+      buttons: [
+        { label: 'WebGPU' + (cur === 'webgpu' ? ' \u2713' : ''), primary: cur === 'webgpu', onClick: function () { setScanEngine('webgpu'); } },
+        { label: 'WebAssembly' + (cur === 'wasm' ? ' \u2713' : ''), primary: cur === 'wasm', onClick: function () { setScanEngine('wasm'); } },
+        { label: 'Cancel' }
+      ]
+    });
+  }
+  function setScanEngine(engine) {
+    settings.scanEngine = engine;
+    saveSettings();
+    paddleOcrPromise = null; // the next scan loads the engine fresh
+    paddleBackendUsed = null;
+    renderAdvanced();
+    toast(engine === 'webgpu' ? 'Photo engine: WebGPU' : 'Photo engine: WebAssembly');
+  }
+
   function onResetProject() {
     showModal({
       title: 'Reset project?',
@@ -4714,9 +4785,12 @@
     el('setExperimentalToggle').onclick = function () {
       settings.experimental = !settings.experimental;
       saveSettings();
-      renderSettings();
+      renderAdvanced();
       toast(settings.experimental ? 'Experimental features on' : 'Experimental features off');
     };
+    el('advancedSettingsBtn').onclick = function () { showAdvanced(); };
+    el('advancedBack').onclick = goBackView;
+    el('scanEngineBtn').onclick = function () { showEngineChooser(); };
     el('installAppBtn').onclick = onInstallApp;
     el('shareProjectBtn').onclick = function () {
       var p = settingsCtx.project;
