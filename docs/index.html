@@ -11,7 +11,7 @@
 <!-- ?v= cache-buster: bump every release so phones fetch fresh files -->
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-<link rel="stylesheet" href="css/style.css?v=web-v2.7.1">
+<link rel="stylesheet" href="css/style.css?v=web-v2.8.0">
 </head>
 <body>
 
@@ -116,7 +116,7 @@
     </div>
     <div class="timeline-label">History</div>
     <div class="timeline" id="timelineRows"></div>
-    <button class="reset-link no-print" id="resetPlacingBtn">Reset placing progress</button>
+    <div class="pace-line no-print" id="paceLine"></div>
   </div>
   <div id="placingComplete" style="display:none">
     <h2>Placing complete!</h2>
@@ -276,6 +276,13 @@
   </div>
   <div class="set-row">
     <div>
+      <div class="set-label">Keep screen awake</div>
+      <div class="sub" id="awakeSub">The screen stays on while you're placing.</div>
+    </div>
+    <button id="setAwakeToggle" class="toggle">Off</button>
+  </div>
+  <div class="set-row">
+    <div>
       <div class="set-label">Experimental features</div>
       <div class="sub">Try in-progress features as they arrive</div>
     </div>
@@ -426,12 +433,12 @@
       <button id="textCancel">Cancel</button>
     </div>
     <input type="file" id="textCameraInput" accept="image/*" capture="environment" style="display:none">
-    <input type="file" id="textFileInput" accept="image/*" style="display:none">
+    <input type="file" id="textFileInput" accept="image/*" multiple style="display:none">
   </div>
 </div>
 
-<script src="js/model.js?v=web-v2.7.1"></script>
-<script src="js/scan-parse.js?v=web-v2.7.1"></script>
-<script src="js/app.js?v=web-v2.7.1"></script>
+<script src="js/model.js?v=web-v2.8.0"></script>
+<script src="js/scan-parse.js?v=web-v2.8.0"></script>
+<script src="js/app.js?v=web-v2.8.0"></script>
 </body>
 </html>

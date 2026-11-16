@@ -279,6 +279,8 @@ button:disabled { opacity: 0.35; }
   display: block; margin: 1rem auto 0; background: none; border: none;
   color: var(--muted); text-decoration: underline; font-size: 0.9rem; min-height: 2.222rem;
 }
+/* Live pace at the bottom of the placing screen — tiny, out of the way. */
+.pace-line { font-size: 0.8rem; color: var(--muted); text-align: center; margin-top: 1rem; }
 
 /* Box detail table */
 .btable { width: 100%; border-collapse: collapse; background: var(--card); font-size: 1rem; }

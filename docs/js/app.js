@@ -8,7 +8,7 @@
   var M = window.JM;
   // Single source of truth for the displayed version (Projects title).
   // Bump this with every release, alongside the ?v= cache-busters.
-  var APP_VERSION = '2.7.1';
+  var APP_VERSION = '2.8.0';
 
   function el(id) { return document.getElementById(id); }
 
@@ -64,6 +64,9 @@
       // works everywhere). WebGPU is the default; if it doesn't work on
       // a phone the app falls back to WebAssembly on its own.
       scanEngine: 'webgpu',
+      // Keep the screen on while placing (Wake Lock API). Off by
+      // default — a screen that never sleeps eats battery.
+      keepAwake: false,
       // Set-and-forget break ranges. Scoring-only: they adjust the
       // leaderboard time, never the placing itself. No breaks by default —
       // a pull only counts breaks he actually took (set them in Settings,
@@ -84,6 +87,7 @@
       padScale: (s.padScale > 0) ? Math.min(2, Math.max(0.5, s.padScale)) : d.padScale,
       experimental: s.experimental === true,
       scanEngine: s.scanEngine === 'wasm' ? 'wasm' : 'webgpu',
+      keepAwake: s.keepAwake === true,
       breaks: d.breaks
     };
     if (Array.isArray(s.breaks)) {
@@ -207,6 +211,8 @@
     window.scrollTo(0, 0);
     padQueue.length = 0; // drop any in-flight multi-touch presses on navigation
     armBackGuard();
+    updatePaceTimer();
+    applyWakeLock();
   }
 
   /* ------------------------------------------------- back gesture (Android)
@@ -363,7 +369,11 @@
       if (b.primary && b.onClick && !primaryBtn) primaryBtn = btn;
       btn.onclick = function () {
         var r = b.onClick ? b.onClick({ close: close, input: inputEl, inputs: inputEls }) : undefined;
-        if (r !== false) close();
+        /* A button that opens another popup (Menu -> Reset) must not
+           have the old popup's close() wipe the new one's content:
+           showModal replaces modalClose, so only close when this
+           popup is still the live one. */
+        if (r !== false && modalClose === close) close();
       };
       wrap.appendChild(btn);
     });
@@ -1494,9 +1504,18 @@
    * branch is built on it, so pushing v2.7.0 ships the back work
    * too.)
    * v2.7.1: a flagged scan row always shows what the engine read
-   * ("Scanned as: …") — it used to hide behind experimental mode. */
+   * ("Scanned as: …") — it used to hide behind experimental mode.
+   * v2.8.0: "Scan from photo" takes both pages at once (page 2
+   * auto-reads when page 1 looks good; a blurry page 1 stops for a
+   * Retry first); a live pace stopwatch at the bottom of the placing
+   * screen ("(1:35:10) Started at 10:31am, estimated completion
+   * time is 1:50pm", ticking every second, first pair starts the
+   * clock); Reset placing moved into the placing Menu (same "are you
+   * sure" popup); a Keep screen awake toggle in Advanced settings
+   * (Wake Lock API, placing screen only, off by default). */
   var PADDLE_READ_SRC = 'js/paddleocr/paddleocr.min.js?v=web-v' + APP_VERSION;
   var textPages = []; // per-page OCR item lists, in page order
+  var textQueuedFile = null; // second page picked with the first (gallery multi-pick)
   var textReading = false;
   var paddleOcrPromise = null;
 
@@ -1580,9 +1599,11 @@
     el('textOverlay').classList.remove('open');
   }
 
-  /** Cancel the whole text scan (drops any pages already read). */
+  /** Cancel the whole text scan (drops any pages already read, and any
+      queued second page). */
   function cancelTextScan() {
     textPages = [];
+    textQueuedFile = null;
     stopTextScanner();
   }
 
@@ -1613,10 +1634,20 @@
 
   function onTextPhotoChange(ev) {
     var files = (ev.target && ev.target.files) || [];
-    if (!files.length) return;
-    var file = files[0];
+    if (!files.length || textReading) return;
+    /* Snapshot the picked files FIRST: ev.target.files is a live
+       FileList, so clearing the input below empties it — reading
+       files[0] after the clear hands readTextPhoto undefined and
+       no photo ever reads. (Caught by the v2.8.0 E2E: the node tests
+       fake files as plain arrays, so they never saw it.) */
+    var picked = Array.prototype.slice.call(files, 0, 2);
     ev.target.value = '';
-    readTextPhoto(file);
+    /* Gallery multi-pick: two pages at once — read the first now and
+       queue the second for the auto-advance after page 1. A single
+       file leaves the queue alone, so a camera retry of page 1 never
+       wipes a queued page 2. */
+    if (picked.length >= 2) textQueuedFile = picked[1];
+    readTextPhoto(picked[0]);
   }
 
   /** A photo from the camera app or the gallery goes straight to the
@@ -1683,19 +1714,38 @@
         (s.flagged ? ', ' + (s.flagged === 1 ? '1 row needs attention' : s.flagged + ' rows need attention') : '') +
         (shown.length ? ' — ' + shown.join(', ') + '.' : '.');
       if (looksBlurry(s.found, s.flagged)) summary += blurHint();
+      /* A second page picked with the first reads itself when page 1
+         looks good — no extra tap. A blurry page 1 stops here instead,
+         so he can Retry it; "Scan next page" then uses the queued
+         photo. Retry keeps the queue: the retried page 1 auto-advances
+         with it too. */
+      if (textQueuedFile && !looksBlurry(s.found, s.flagged)) {
+        var next = textQueuedFile;
+        textQueuedFile = null;
+        readTextPhoto(next);
+        return;
+      }
       showModal({
         title: 'Page 1 read',
         message: summary,
-        onDismiss: function () { textPages = []; },
+        onDismiss: function () { textPages = []; textQueuedFile = null; },
         buttons: [
           {
             label: 'Scan next page', primary: true,
-            onClick: function () { startTextScanner(); }
+            onClick: function () {
+              if (textQueuedFile) {
+                var next = textQueuedFile;
+                textQueuedFile = null;
+                readTextPhoto(next);
+              } else {
+                startTextScanner();
+              }
+            }
           },
           {
             label: 'Retry', onClick: function () { textPages.pop(); startTextScanner(); }
           },
-          { label: 'Cancel', onClick: function () { textPages = []; } }
+          { label: 'Cancel', onClick: function () { textPages = []; textQueuedFile = null; } }
         ]
       });
       return;
@@ -2211,10 +2261,56 @@
     // to the done screen instead of the project.
     el('placeDone').style.display = reviewing ? 'none' : '';
     el('staplingBtn').style.display = reviewing ? 'none' : '';
-    el('resetPlacingBtn').style.display = reviewing ? 'none' : '';
+    el('paceLine').style.display = reviewing ? 'none' : '';
     el('placingBack').textContent = reviewing ? '\u2190 Back' : '\u2190 Project';
 
     renderTimeline(p);
+    renderPace();
+  }
+
+  /** Live pace at the bottom of the placing screen: a stopwatch since
+      the first pair, plus the estimated finish at the current pace.
+      Ticks once a second while placing is on screen. */
+  var paceTimer = null;
+  function formatElapsed(ms) {
+    var s = Math.max(0, Math.floor(ms / 1000));
+    var h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60;
+    return h + ':' + (m < 10 ? '0' : '') + m + ':' + (sec < 10 ? '0' : '') + sec;
+  }
+  function formatClock(t) {
+    var d = new Date(t);
+    var h = d.getHours(), m = d.getMinutes();
+    var ap = h >= 12 ? 'pm' : 'am';
+    h = h % 12; if (h === 0) h = 12;
+    return h + ':' + (m < 10 ? '0' : '') + m + ap;
+  }
+  function renderPace() {
+    var line = el('paceLine');
+    if (!line) return;
+    var p = activeProject();
+    var tm = p ? pullTiming(p) : null;
+    if (!tm) {
+      line.textContent = '(0:00:00) Place the first pair to start the clock.';
+      return;
+    }
+    var now = Date.now();
+    var elapsed = now - tm.first;
+    /* Live grand total (shortfalls and extras included), so the
+       estimate stays honest as the pull shifts. */
+    var total = 0;
+    (p.entries || []).forEach(function (e, i) { total += placeNeeded(p, i); });
+    var left = Math.max(0, total - tm.pairs);
+    var eta = now;
+    if (tm.pairs > 0 && left > 0) eta = now + Math.round(left * elapsed / tm.pairs);
+    line.textContent = '(' + formatElapsed(elapsed) + ') Started at ' + formatClock(tm.first) +
+      ', estimated completion time is ' + formatClock(eta) + '.';
+  }
+  function updatePaceTimer() {
+    if (paceTimer) { clearInterval(paceTimer); paceTimer = null; }
+    if (currentView === 'placing') {
+      renderPace();
+      paceTimer = setInterval(renderPace, 1000);
+    }
   }
 
   function renderTimeline(p) {
@@ -3520,9 +3616,56 @@
         ? 'WebGPU is running the reader on this phone.'
         : 'WebGPU wasn\u2019t available on this phone, so WebAssembly is running the reader.')
       : 'WebGPU uses the phone\u2019s graphics chip and is faster on most phones; WebAssembly works everywhere.';
+    var aw = el('setAwakeToggle');
+    aw.textContent = settings.keepAwake ? 'On' : 'Off';
+    aw.classList.toggle('on', settings.keepAwake);
+    el('awakeSub').textContent = wakeLockSupported()
+      ? 'The screen stays on while you\'re placing.'
+      : 'Wake lock isn\u2019t supported on this browser.';
     var xt = el('setExperimentalToggle');
     xt.textContent = settings.experimental ? 'On' : 'Off';
     xt.classList.toggle('on', settings.experimental);
+  }
+  /* ---------------------------------------------------------- wake lock
+   * Keep the screen on while placing, when the toggle is on. The
+   * browser releases the lock when the app hides, so coming back
+   * re-asks for it; leaving the placing screen releases it. */
+  var wakeLockObj = null; // the held screen wake lock, or null
+  function wakeLockSupported() {
+    try {
+      var nav = (typeof window !== 'undefined' && window.navigator) || {};
+      return !!(nav.wakeLock && nav.wakeLock.request);
+    } catch (e) { return false; }
+  }
+  function applyWakeLock() {
+    var want = settings.keepAwake && currentView === 'placing' &&
+      typeof document !== 'undefined' && document.visibilityState !== 'hidden';
+    if (!want || !wakeLockSupported()) { releaseWakeLock(); return; }
+    if (wakeLockObj) return;
+    try {
+      var req = window.navigator.wakeLock.request('screen');
+      if (req && req.then) {
+        req.then(function (lock) {
+          /* The grant can land after he already left placing — release
+             it straight away instead of holding it behind his back. */
+          if (currentView !== 'placing' || !settings.keepAwake) {
+            if (lock && lock.release) { try { lock.release(); } catch (e) {} }
+            return;
+          }
+          wakeLockObj = lock;
+          if (lock && lock.addEventListener) {
+            lock.addEventListener('release', function () { wakeLockObj = null; });
+          }
+        }).catch(function () { wakeLockObj = null; });
+      }
+    } catch (e) { wakeLockObj = null; }
+  }
+  function releaseWakeLock() {
+    if (wakeLockObj) {
+      var lock = wakeLockObj;
+      wakeLockObj = null;
+      if (lock.release) { try { lock.release(); } catch (e) {} }
+    }
   }
   function showEngineChooser() {
     var cur = settings.scanEngine;
@@ -4563,6 +4706,7 @@
             current = firstOpenSize(p); if (!reviewing) saveCurrent(); renderPlacing();
           }
         },
+        { label: 'Reset placing progress', onClick: function () { onResetPlacing(); } },
         { label: 'Cancel' }
       ]
     });
@@ -4708,7 +4852,6 @@
     persist();
     renderPlacing();
   }
-    el('resetPlacingBtn').onclick = onResetPlacing;
     el('completeBack').onclick = goBackView;
     el('completeLeaderboardBtn').onclick = function () { showLeaderboard('complete'); };
     el('completeReviewBtn').onclick = function () { showPlacingReview(); };
@@ -4794,6 +4937,14 @@
       renderAdvanced();
       toast(settings.experimental ? 'Experimental features on' : 'Experimental features off');
     };
+    el('setAwakeToggle').onclick = function () {
+      settings.keepAwake = !settings.keepAwake;
+      saveSettings();
+      applyWakeLock();
+      renderAdvanced();
+      toast(settings.keepAwake ? 'Screen will stay awake while placing' : 'Screen can sleep again');
+    };
+    document.addEventListener('visibilitychange', function () { applyWakeLock(); });
     el('advancedSettingsBtn').onclick = function () { showAdvanced(); };
     el('advancedBack').onclick = goBackView;
     el('scanEngineBtn').onclick = function () { showEngineChooser(); };
