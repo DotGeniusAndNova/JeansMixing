@@ -8,7 +8,7 @@
   var M = window.JM;
   // Single source of truth for the displayed version (Projects title).
   // Bump this with every release, alongside the ?v= cache-busters.
-  var APP_VERSION = '2.5.1';
+  var APP_VERSION = '2.5.2';
 
   function el(id) { return document.getElementById(id); }
 
@@ -1365,7 +1365,14 @@
    * the phone's own camera app instead (a file input with
    * capture="environment"); the photo comes back and goes straight to
    * the reader, the same as Scan from photo. The QR scanner keeps its
-   * live preview — that one works fine. */
+   * live preview — that one works fine.
+   * v2.5.2: the camera waits for Take photo — opening the scanner no
+   * longer jumps straight into the camera app, so Scan from photo is
+   * reachable without dismissing the camera first. And a read that
+   * finds almost nothing, or more bad rows than good ones, says so in
+   * the summary ("this looks blurry — tap Retry for a clearer shot"):
+   * alex's first live attempt found 1 row because the photo was out
+   * of focus, and the app had silently accepted it. */
   var PADDLE_READ_SRC = 'js/paddleocr/paddleocr.min.js?v=web-v' + APP_VERSION;
   var textPages = []; // per-page OCR item lists, in page order
   var textReading = false;
@@ -1433,16 +1440,16 @@
 
   function startTextScanner() {
     textStatus(textPages.length === 0
-      ? 'Take a photo of page 1 of the sheet in your camera app.'
-      : 'Take a photo of page ' + textPageNo() + ' of the sheet in your camera app.');
+      ? 'Tap Take photo to photograph page 1, or Scan from photo to pick one.'
+      : 'Tap Take photo to photograph page ' + textPageNo() + ', or Scan from photo to pick one.');
     el('textOverlay').classList.add('open');
     setTextButtonsDisabled(false);
-    /* Open the native camera right now, inside the tap: the file
-       picker must come from the gesture or the phone may never show
-       it. The reader warms up in the background while he frames the
-       shot — the read itself awaits it, so a slow load only delays
-       the result. */
-    openTextCamera();
+    /* The camera waits for Take photo (v2.5.2) — opening the scanner
+       used to jump straight into the camera app, so reaching Scan from
+       photo meant dismissing the camera first. Take photo's tap is the
+       gesture the file picker needs. The reader warms up in the
+       background while he decides, so a slow load only delays the
+       result, never the camera. */
     ensurePaddle().catch(function () {});
   }
 
@@ -1499,6 +1506,18 @@
     });
   }
 
+  /** A read that found almost nothing, or more bad rows than good ones,
+      almost certainly came from a blurry or out of focus photo — say so
+      in the summary, as a hint to retake, never a block. (Proven: a
+      blurred Jeds page reads 2 sizes with 15 rows needing attention,
+      while good pages read 19/4 and 19/13 with at most 9 flagged.) */
+  function looksBlurry(found, flagged) {
+    return found === 0 || flagged > found;
+  }
+  function blurHint() {
+    return ' This looks blurry — tap Retry for a clearer shot, holding steady and tapping the sheet to focus.';
+  }
+
   /** One page came back from the engine: keep its items, then show what
       was read and offer the next step. Page 1 offers Retry / Scan next
       page; page 2 offers Retry / Create project. The page-1 summary
@@ -1514,6 +1533,7 @@
       var summary = 'Page 1 read: ' + s.found + ' sizes, ' + s.total + ' pairs' +
         (s.flagged ? ', ' + (s.flagged === 1 ? '1 row needs attention' : s.flagged + ' rows need attention') : '') +
         (shown.length ? ' — ' + shown.join(', ') + '.' : '.');
+      if (looksBlurry(s.found, s.flagged)) summary += blurHint();
       showModal({
         title: 'Page 1 read',
         message: summary,
@@ -1539,11 +1559,13 @@
       return M.displaySize(r.waist, r.length);
     });
     if (ok > 8) shown2.push('and ' + (ok - 8) + ' more');
+    var bothMsg = 'Both pages read: ' + ok + ' sizes, ' + total + ' pairs' +
+      (bad ? ', ' + (bad === 1 ? '1 row needs attention' : bad + ' rows need attention') : '') +
+      (shown2.length ? ' — ' + shown2.join(', ') + '.' : '.');
+    if (looksBlurry(ok, bad)) bothMsg += blurHint();
     showModal({
       title: 'Both pages read',
-      message: 'Both pages read: ' + ok + ' sizes, ' + total + ' pairs' +
-        (bad ? ', ' + (bad === 1 ? '1 row needs attention' : bad + ' rows need attention') : '') +
-        (shown2.length ? ' — ' + shown2.join(', ') + '.' : '.'),
+      message: bothMsg,
       buttons: [
         {
           label: 'Create project', primary: true,
