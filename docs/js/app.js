@@ -1565,7 +1565,15 @@
         if (want !== 'webgpu') throw e;
         used = 'wasm';
         return createPaddleOcr('wasm');
-      }).then(function (ocr) { paddleBackendUsed = used; return ocr; });
+      }).then(function (ocr) {
+        paddleBackendUsed = used;
+        if (want === 'webgpu' && used === 'wasm') {
+          // The scanner says so out loud when it falls back, so the
+          // phone's engine is never a silent surprise.
+          toast('WebGPU isn\u2019t available on this phone \u2014 using WebAssembly instead.');
+        }
+        return ocr;
+      });
     }).catch(function (e) { paddleOcrPromise = null; throw e; });
     return paddleOcrPromise;
   }

@@ -399,10 +399,12 @@ button:disabled { opacity: 0.35; }
 [data-theme="dark"] .set-row { border-bottom-color: #2c2c2c; }
 
 /* Toast */
+/* Toast sits above every overlay (text/QR/crop are 100–103), so a
+   notice fired mid-scan — like the WebGPU fallback — is actually seen. */
 #toast {
   position: fixed; left: 50%; bottom: 1.444rem; transform: translateX(-50%);
   background: var(--ink); color: #fff; padding: 0.667rem 1.111rem; border-radius: 1.333rem;
-  font-size: 1rem; display: none; z-index: 60; max-width: 90vw; text-align: center;
+  font-size: 1rem; display: none; z-index: 200; max-width: 90vw; text-align: center;
 }
 #toast.show { display: block; }
 
