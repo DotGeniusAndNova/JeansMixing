@@ -2,13 +2,20 @@
  * All screens, ported from the Android activities:
  *   MainActivity, EntryActivity, ReviewActivity, LockedActivity,
  *   PlacingActivity, BoxDetailActivity, StaplingActivity.
+ * v2.10.0: the single-size review is the default after a text scan
+ *   (plain white/grey row, no alternating yellow); Back from the list
+ *   returns to it; a text scan imports into the current project
+ *   instead of minting a new one; Add sizes uses the manual entry
+ *   screen; a quantity typed on a flagged row no longer drops the
+ *   keyboard on the first digit (the flag-clear re-render waits for
+ *   blur).
  */
 (function () {
   'use strict';
   var M = window.JM;
   // Single source of truth for the displayed version (Projects title).
   // Bump this with every release, alongside the ?v= cache-busters.
-  var APP_VERSION = '2.9.1';
+  var APP_VERSION = '2.10.0';
 
   function el(id) { return document.getElementById(id); }
 
@@ -265,9 +272,14 @@
       the home screen, where there is nowhere to go back to. */
   function goBackView() {
     switch (currentView) {
-      case 'entry': saveDraft(); showProjects(); return true;
-      case 'review': showEntry(); return true;
-      case 'sizereview': showReview(); return true;
+      case 'entry':
+        saveDraft();
+        if (entryReturn === 'sizereview') { returnFromEntry(); return true; }
+        showProjects(); return true;
+      case 'review':
+        if (reviewReturn === 'sizereview') { showSizeReview(); return true; }
+        showEntry(); return true;
+      case 'sizereview': showListReview(true); return true;
       case 'locked': showProjects(); return true;
       case 'placing':
         if (reviewing) {
@@ -646,11 +658,23 @@
       toast('Add at least one size first');
       return;
     }
-    showReview();
+    /* Done from the entry screen: back to the single-size review when
+       he came from there to add sizes, else the list as before. */
+    returnFromEntry();
   }
 
   /* ----------------------------------------------------------------- review */
   function showReview() { renderReview(); show('review'); }
+
+  /* Where Back from the list review goes: the entry screen, unless the
+     list was reached from the single-size review — then it goes back
+     there. Set only by showListReview; showReview itself never touches
+     it, so a detour (Settings) doesn't lose the return. */
+  var reviewReturn = 'entry';
+  function showListReview(fromSize) {
+    reviewReturn = fromSize ? 'sizereview' : 'entry';
+    showReview();
+  }
 
   /* Size editing on the review screen (universal, not just for scans):
      tap a size to edit its two digits in place. While a row is being
@@ -684,9 +708,12 @@
      delete button — shared by the list review and the single-size
      review, so a fix in one place lands in both. rerender is the
      screen to redraw after a change (renderReview / renderSizeReview). */
-  function buildReviewRow(p, e, pos, rerender) {
+  function buildReviewRow(p, e, pos, rerender, plain) {
       var row = document.createElement('div');
-      row.className = 'trow' + (pos % 2 === 1 ? ' alt' : '') + (e.scanFlag ? ' flag' : '');
+      /* The single-size review shows one row at a time, so it stays
+         plain white/grey — no alternating yellow, no flagged orange;
+         the flagged text below still says what needs checking. */
+      row.className = plain ? 'trow' : 'trow' + (pos % 2 === 1 ? ' alt' : '') + (e.scanFlag ? ' flag' : '');
       if (reviewSizeEdit && reviewSizeEdit.pos === pos) {
         // In-place size editor: two 2-digit boxes + save/cancel.
         var wIn = document.createElement('input');
@@ -799,6 +826,12 @@
       qty.setAttribute('inputmode', 'numeric');
       if (!e.scanFlag) qty.min = '1';
       qty.value = (e.scanFlag && e.qty === 0) ? '' : e.qty;
+      /* The flag may clear while he's typing the quantity — the row
+         only re-renders when he LEAVES the box. Rebuilding it mid-number
+         destroys the input he's typing in and drops the keyboard after
+         the first digit (the v2.9.1 bug: type a quantity, tap the box
+         again to finish it). The totals still update live. */
+      var flagClearedWhileTyping = false;
       qty.addEventListener('input', function () {
         var v = parseInt(qty.value, 10);
         if (e.scanFlag) {
@@ -813,13 +846,14 @@
               return;
             }
             e.qty = v;
-            if (maybeClearScanFlag(e)) { persist(); rerender(); }
-            else { persist(); updateReviewTotal(); }
+            if (maybeClearScanFlag(e)) flagClearedWhileTyping = true;
+            persist();
+            refreshReviewTotals();
           }
         } else if (v > 0) {
           e.qty = v;
           persist();
-          updateReviewTotal();
+          refreshReviewTotals();
         }
       });
       // If they leave junk in the box, put the last good value back.
@@ -831,6 +865,10 @@
           if (isNaN(v) || v < 0) qty.value = e.qty === 0 ? '' : e.qty;
         } else if (!(v > 0)) {
           qty.value = e.qty;
+        }
+        if (flagClearedWhileTyping) {
+          flagClearedWhileTyping = false;
+          rerender();
         }
       });
       var del = document.createElement('button');
@@ -868,22 +906,32 @@
       (flagged ? ' \u2014 ' + flagged + ' row' + (flagged === 1 ? '' : 's') + ' need attention' : '');
   }
 
+  /* Both review totals, for edits that don't re-render (a quantity
+     typed in the single-size review has to move its total line too). */
+  function refreshReviewTotals() {
+    updateReviewTotal();
+    updateSizeReviewTotal();
+  }
+
   /* ------------------------------------------------- single-size review
-   * Experimental (text scan only): instead of the list, one size at a
-   * time — the row cropped straight out of the sheet photo above the
-   * same editor the list uses, so everything he needs to check is on
-   * his screen at once (no more squinting between the phone and the
-   * tiny numbers on the paper). Arrows step through the sizes; the
-   * bottom button is "Show as list" until the last size, where it
-   * becomes "Create project" (the same confirm flow as the list).
-   * The photos live only in memory (textPagePhotos) and are dropped
-   * when the review ends, so a crop is only available while the scan
-   * session is live. */
+   * The default review after a text scan: instead of the list, one
+   * size at a time — the row cropped straight out of the sheet photo
+   * above the same editor the list uses, so everything he needs to
+   * check is on his screen at once (no more squinting between the
+   * phone and the tiny numbers on the paper). Arrows step through the
+   * sizes; the bottom button is "Show as list" until the last size,
+   * where it becomes "Create project" (the same confirm flow as the
+   * list). The photos live only in memory (textPagePhotos) and are
+   * dropped when the review ends, so a crop is only available while
+   * the scan session is live. */
   var sizeReviewIdx = 0;
   var CROP_PAD = 14; // px of photo around the row's box
 
-  function showSizeReview() {
-    sizeReviewIdx = 0;
+  /* startIdx: where to land. A fresh scan starts at the first size;
+     coming back (Back from the list, or Done after adding sizes) keeps
+     the size he was on, or jumps to the first size just added. */
+  function showSizeReview(startIdx) {
+    if (typeof startIdx === 'number') sizeReviewIdx = startIdx;
     renderSizeReview();
     show('sizereview');
   }
@@ -909,7 +957,7 @@
     var e = p.entries[sizeReviewIdx];
     el('sizeCropCap').textContent = 'Size ' + (sizeReviewIdx + 1) + ' of ' + p.entries.length +
       (e.scanCrop ? ' \u2014 page ' + (e.scanCrop.page + 1) : '');
-    rowWrap.appendChild(buildReviewRow(p, e, sizeReviewIdx, renderSizeReview));
+    rowWrap.appendChild(buildReviewRow(p, e, sizeReviewIdx, renderSizeReview, true));
     el('sizePrev').disabled = sizeReviewIdx === 0;
     el('sizeNext').disabled = last;
     el('sizeListBtn').textContent = last ? 'Create project' : 'Show as list';
@@ -973,17 +1021,29 @@
     });
   }
 
-  /* Add a blank size to the list, in size order once it has one, and
-     jump straight to it with the size editor open. */
-  function addSizeReviewRow() {
+  /* Add sizes the manual way: the entry screen he already knows (the
+     pad, the arrows, Done), and coming back lands on the single-size
+     review — at the first size he just added, when there is one. */
+  var entryReturn = 'projects';
+  var entryReturnCount = 0;
+  function addSizeViaEntry() {
     var p = activeProject();
     if (!p) return;
-    var e = { waist: '', length: '', qty: 0, scanFlag: { raw: '', reason: 'added' } };
-    p.entries.push(e);
-    sizeReviewIdx = p.entries.length - 1;
-    reviewSizeEdit = { pos: sizeReviewIdx, waist: '', length: '' };
-    persist();
-    renderSizeReview();
+    entryReturn = 'sizereview';
+    entryReturnCount = p.entries.length;
+    showEntry();
+  }
+  function returnFromEntry() {
+    var p = activeProject();
+    var toSize = entryReturn === 'sizereview';
+    var firstNew = entryReturnCount;
+    entryReturn = 'projects';
+    entryReturnCount = 0;
+    if (toSize && p) {
+      showSizeReview(p.entries.length > firstNew ? firstNew : undefined);
+    } else {
+      showListReview(false);
+    }
   }
 
   function onConfirm() {
@@ -1611,7 +1671,7 @@
     projects.push(p);
     ui.activeId = p.id;
     persist();
-    showReview();
+    showListReview(false);
   }
 
   /* ------------------------------------------------------- text scanner (beta)
@@ -1961,7 +2021,7 @@
       onDismiss: function () { textPages = []; clearTextPhotos(); },
       buttons: [
         {
-          label: 'Create project', primary: true,
+          label: 'Review sizes', primary: true,
           onClick: function () { return createTextProject(); }
         },
         {
@@ -1976,30 +2036,31 @@
       screen — the same as a QR-scanned one. If the total isn't
       divisible by the box size, the "Something's wrong" popup shows the
       second the review screen opens (and again on Confirm). */
+  /* A text scan imports into the project he's already on (the one
+     whose entry screen he scanned from) — it used to mint a brand-new
+     project every time, leaving the empty one behind at 0 sizes and
+     0 boxes. The single-size review is the default landing now, not
+     an experimental one. */
   function createTextProject() {
     var merged = ScanParse.lookupPages(textPages);
     textPages = [];
-    var name = M.Store.uniqueName(projects, M.projectDisplayName(new Date()));
-    var p = M.Store.blankProject(name);
-    p.mode = 'regular';
-    p.pairsPerBox = settings.pairsPerBox;
-    p.flippingEnabled = settings.flippingEnabled;
-    p.bundles = cloneBundles(settings.bundles);
-    projects.push(p);
-    ui.activeId = p.id;
-    persist();
-    /* Experimental mode: the text scan lands on the single-size review
-       (crop preview, one size at a time) instead of the list. */
-    importScan(merged, { singleReview: settings.experimental });
-    var total = p.entries.reduce(function (s, e) { return s + e.qty; }, 0);
-    var cap = (p.pairsPerBox > 0) ? p.pairsPerBox : M.BOX_CAPACITY;
+    var p = activeProject();
+    if (!p || p.locked) return undefined;
+    var warned = false;
+    importScan(merged, {
+      singleReview: true,
+      /* The warning runs once the import actually lands (after the
+         "Replace sizes?" tap, when there is one), over the review. */
+      onImported: function (total, cap) {
+        if (total % cap !== 0) {
+          showDivisibilityWarning(total, cap);
+          warned = true;
+        }
+      }
+    });
     /* The warning replaces this modal's content, so the button wrapper
        must not auto-close it — return false only when it opened. */
-    if (total % cap !== 0) {
-      showDivisibilityWarning(total, cap);
-      return false;
-    }
-    return undefined;
+    return warned ? false : undefined;
   }
 
   /** The "Something's wrong" popup, shared by Confirm and the text-scan
@@ -2230,14 +2291,21 @@
       p.entryDraft = null;
       entry = null;
       persist();
-      /* Text scans in experimental mode land on the single-size review
-         (one size at a time, crop preview); everything else lands on
-         the list as before. */
-      if (opts.singleReview) showSizeReview(); else showReview();
+      /* Text scans land on the single-size review (one size at a time,
+         crop preview); everything else lands on the list as before. */
+      if (opts.singleReview) showSizeReview(0); else showListReview(false);
       if (bad > 0) {
         toast('Scanned ' + ok + ' sizes \u2014 ' + bad + ' row' + (bad === 1 ? '' : 's') + ' need attention');
       } else {
         toast('Scanned ' + ok + ' sizes \u2014 check them over');
+      }
+      /* The arrival check (a non-divisible total warns) runs once the
+         import actually lands — after the "Replace sizes?" tap, when
+         there is one — so it reads the new list, not the old one. */
+      if (opts.onImported) {
+        var total = p.entries.reduce(function (s, e) { return s + e.qty; }, 0);
+        var cap = (p.pairsPerBox > 0) ? p.pairsPerBox : M.BOX_CAPACITY;
+        opts.onImported(total, cap);
       }
     }
     if (p.entries.length > 0) {
@@ -4881,10 +4949,11 @@
     // review
     el('reviewBack').onclick = goBackView;
     el('confirmBtn').onclick = onConfirm;
-    /* Single-size review (experimental text scan): Back goes to the
-       list; the arrows step through the sizes; the bottom button is
-       "Show as list" until the last size, where it creates the project. */
-    el('sizeReviewBack').onclick = showReview;
+    /* Single-size review (the default after a text scan): Back goes
+       to the list; the arrows step through the sizes; the bottom
+       button is "Show as list" until the last size, where it creates
+       the project. Add opens the manual entry screen. */
+    el('sizeReviewBack').onclick = function () { showListReview(true); };
     el('sizePrev').onclick = function () {
       if (sizeReviewIdx > 0) { sizeReviewIdx--; renderSizeReview(); }
     };
@@ -4892,12 +4961,12 @@
       var p = activeProject();
       if (p && sizeReviewIdx < p.entries.length - 1) { sizeReviewIdx++; renderSizeReview(); }
     };
-    el('sizeAddBtn').onclick = addSizeReviewRow;
+    el('sizeAddBtn').onclick = addSizeViaEntry;
     el('sizeListBtn').onclick = function () {
       var p = activeProject();
       if (!p) return;
       if (sizeReviewIdx === p.entries.length - 1) onConfirm();
-      else showReview();
+      else showListReview(true);
     };
     // locked
     el('lockedBack').onclick = goBackView;
