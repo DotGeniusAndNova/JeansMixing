@@ -8,7 +8,7 @@
   var M = window.JM;
   // Single source of truth for the displayed version (Projects title).
   // Bump this with every release, alongside the ?v= cache-busters.
-  var APP_VERSION = '2.5.0';
+  var APP_VERSION = '2.5.1';
 
   function el(id) { return document.getElementById(id); }
 
@@ -1358,9 +1358,15 @@
    * after it. The reader is vendored with the app (js/paddleocr/, plus
    * the onnxruntime wasm in js/ort/) and loaded from local files, just
    * like the QR reader — no CDN fetch at scan time. Two pages, as
-   * usual: page 1, then page 2, then Create project. */
+   * usual: page 1, then page 2, then Create project.
+   *
+   * v2.5.1: no live preview anymore — the in-app preview made the text
+   * too small to read and the camera wouldn't focus. "Scan text" opens
+   * the phone's own camera app instead (a file input with
+   * capture="environment"); the photo comes back and goes straight to
+   * the reader, the same as Scan from photo. The QR scanner keeps its
+   * live preview — that one works fine. */
   var PADDLE_READ_SRC = 'js/paddleocr/paddleocr.min.js?v=web-v' + APP_VERSION;
-  var textStream = null, textPermTimer = null;
   var textPages = []; // per-page OCR item lists, in page order
   var textReading = false;
   var paddleOcrPromise = null;
@@ -1370,7 +1376,7 @@
   function textPageNo() { return textPages.length + 1; }
 
   function setTextButtonsDisabled(disabled) {
-    ['textCapture', 'textUsePhoto', 'textCancel'].forEach(function (id) {
+    ['textTakePhoto', 'textUsePhoto', 'textCancel'].forEach(function (id) {
       el(id).disabled = disabled;
     });
   }
@@ -1416,17 +1422,6 @@
   }
 
   function stopTextScanner() {
-    clearTimeout(textPermTimer);
-    textPermTimer = null;
-    if (textStream) {
-      textStream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) {} });
-      textStream = null;
-    }
-    var v = el('textVideo');
-    if (v) {
-      if (typeof v.pause === 'function') { try { v.pause(); } catch (e) {} }
-      v.srcObject = null;
-    }
     el('textOverlay').classList.remove('open');
   }
 
@@ -1438,75 +1433,26 @@
 
   function startTextScanner() {
     textStatus(textPages.length === 0
-      ? 'Point the camera at page 1 of the sheet, then tap Capture.'
-      : 'Point the camera at page ' + textPageNo() + ' of the sheet, then tap Capture.');
+      ? 'Take a photo of page 1 of the sheet in your camera app.'
+      : 'Take a photo of page ' + textPageNo() + ' of the sheet in your camera app.');
     el('textOverlay').classList.add('open');
     setTextButtonsDisabled(false);
-    ensurePaddle().then(function (ok) {
-      if (!textOverlayOpen()) return; // cancelled while the reader loaded
-      if (!ok) {
-        textStatus('Couldn’t load the text reader — reload the app and try again, or use a photo instead.');
-        return;
-      }
-      var nav = (typeof navigator !== 'undefined') ? navigator : null;
-      if (!nav || !nav.mediaDevices || !nav.mediaDevices.getUserMedia) {
-        textStatus('This device has no camera to use here — use a photo instead.');
-        return;
-      }
-      textStatus('Waiting for camera permission — allow the camera when asked.');
-      textPermTimer = setTimeout(function () {
-        if (textOverlayOpen() && !textStream) {
-          textStatus('Still waiting for camera permission — if you don’t see a prompt, tap Cancel and try again.');
-        }
-      }, 15000);
-      nav.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false })
-        .then(function (stream) {
-          clearTimeout(textPermTimer);
-          textPermTimer = null;
-          if (!textOverlayOpen()) {
-            stream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) {} });
-            return;
-          }
-          textStream = stream;
-          var v = el('textVideo');
-          v.srcObject = stream;
-          if (typeof v.play === 'function') {
-            var pr = v.play();
-            if (pr && pr.catch) pr.catch(function () {});
-          }
-          textStatus('Point the camera at page ' + textPageNo() + ' of the sheet, then tap Capture.');
-        })
-        .catch(function (err) {
-          clearTimeout(textPermTimer);
-          textPermTimer = null;
-          if (!textOverlayOpen()) return;
-          var name = err && err.name;
-          if (name === 'NotAllowedError' || name === 'SecurityError') {
-            textStatus('Camera access is blocked — allow the camera for this site, or use a photo instead.');
-          } else if (name === 'NotFoundError' || name === 'OverconstrainedError') {
-            textStatus('No camera was found on this device — use a photo instead.');
-          } else {
-            textStatus('The camera couldn’t start — use a photo instead.');
-          }
-        });
-    });
+    /* Open the native camera right now, inside the tap: the file
+       picker must come from the gesture or the phone may never show
+       it. The reader warms up in the background while he frames the
+       shot — the read itself awaits it, so a slow load only delays
+       the result. */
+    openTextCamera();
+    ensurePaddle().catch(function () {});
   }
 
-  /** The Capture button: grab the current camera frame and read it. */
-  function textCapture() {
-    if (textReading) return;
-    var v = el('textVideo');
-    if (!v || !v.videoWidth) {
-      textStatus('The camera isn’t ready yet — wait a second and try again.');
-      return;
-    }
-    var canvas = document.createElement('canvas');
-    var scale = Math.min(1, 2048 / Math.max(v.videoWidth, v.videoHeight));
-    canvas.width = Math.max(1, Math.round(v.videoWidth * scale));
-    canvas.height = Math.max(1, Math.round(v.videoHeight * scale));
-    var ctx = canvas.getContext('2d');
-    ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
-    runTextRead(canvas);
+  /** The native camera app, via a file input with capture: the phone's
+      own camera focuses properly, unlike the in-app preview. On a
+      desktop the capture hint is ignored and it opens the file
+      picker instead, which is the same as Scan from photo. */
+  function openTextCamera() {
+    var inp = el('textCameraInput');
+    if (inp && inp.click) { inp.value = ''; inp.click(); }
   }
 
   function onTextPhotoChange(ev) {
@@ -1517,35 +1463,19 @@
     readTextPhoto(file);
   }
 
-  /** "Scan from photo": read a photo from the gallery/files, like the QR
-      scanner's photo fallback. The file goes straight to the reader —
-      no canvas round-trip, so the reader sees the photo's original
-      bytes (re-encoding to JPEG first can blur the small digits). */
+  /** A photo from the camera app or the gallery goes straight to the
+      reader — no canvas round-trip, so the reader sees the photo's
+      original bytes (re-encoding to JPEG first can blur the small
+      digits). */
   function readTextPhoto(file) {
     if (!file) return;
     runTextReadBlob(file);
   }
 
-  /** Read one page (a canvas) with the engine and handle the result.
-      The engine runs in its own worker, so the page stays responsive
-      while it reads — a page takes a few seconds. */
-  function runTextRead(canvas) {
-    if (textReading) return;
-    var blobP = new Promise(function (resolve) {
-      if (canvas.toBlob) canvas.toBlob(function (b) { resolve(b); }, 'image/jpeg', 0.92);
-      else resolve(null);
-    });
-    blobP.then(function (blob) {
-      if (!blob) {
-        textStatus('Couldn’t read that photo — try a clearer shot, or use a photo instead.');
-        return;
-      }
-      runTextReadBlob(blob);
-    });
-  }
-
-  /** The shared read: a Blob (a photo file, or a camera frame) goes to
-      the engine, and the items come back for the page result. */
+  /** The shared read: a photo Blob goes to the engine, and the items
+      come back for the page result. The engine runs in its own worker,
+      so the page stays responsive while it reads — a page takes a few
+      seconds. */
   function runTextReadBlob(blob) {
     if (textReading) return;
     textReading = true;
@@ -1561,7 +1491,11 @@
     }).catch(function (e) {
       textReading = false;
       setTextButtonsDisabled(false);
-      textStatus('Couldn’t read that photo — try a clearer shot, or use a photo instead.');
+      if (e && e.message === 'paddle load failed') {
+        textStatus('Couldn’t load the text reader — reload the app and try again.');
+      } else {
+        textStatus('Couldn’t read that photo — try a clearer shot.');
+      }
     });
   }
 
@@ -4340,11 +4274,21 @@
     };
     el('qrFileInput').addEventListener('change', onQrPhotoChange);
     el('textCancel').onclick = function () { cancelTextScan(); };
-    el('textCapture').onclick = function () { textCapture(); };
+    el('textTakePhoto').onclick = function () { openTextCamera(); };
     el('textUsePhoto').onclick = function () {
       var inp = el('textFileInput');
       if (inp.click) inp.click();
     };
+    el('textCameraInput').addEventListener('change', onTextPhotoChange);
+    el('textCameraInput').addEventListener('cancel', function () {
+      /* Backed out of the camera app without a photo: stay on the
+         overlay with the buttons live so he can try again. (Not every
+         browser fires this — Cancel is always there as the fallback.) */
+      if (textOverlayOpen() && !textReading) {
+        textStatus('No photo taken — tap Take photo to try again.');
+        setTextButtonsDisabled(false);
+      }
+    });
     el('textFileInput').addEventListener('change', onTextPhotoChange);
     el('entrySettings').onclick = function () { saveDraft(); settingsReturn = 'entry'; showSettings('project', activeProject()); };
     // settings from anywhere: project mode (read-only after lock), back where you came from

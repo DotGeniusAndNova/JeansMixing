@@ -176,8 +176,8 @@ button:disabled { opacity: 0.35; }
 #textOverlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.85); align-items: flex-start; justify-content: center; z-index: 103; overflow-y: auto; padding: 1rem; }
 #textOverlay.open { display: flex; }
 #textBox { width: 100%; max-width: 30rem; margin: auto; }
-#textStage { position: relative; width: 100%; aspect-ratio: 4/3; background: #000; border-radius: 0.778rem; overflow: hidden; }
-#textVideo { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* v2.5.1: no live preview anymore — the overlay is just a status +
+   buttons while the native camera app is open. */
 #textStatus { color: #fff; text-align: center; margin: 0.889rem 0; line-height: 1.45; }
 #textOverlay .mbtns { display: flex; flex-direction: column; gap: 0.556rem; }
 #textOverlay .mbtns button { width: 100%; }

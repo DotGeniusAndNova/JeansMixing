@@ -11,7 +11,7 @@
 <!-- ?v= cache-buster: bump every release so phones fetch fresh files -->
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-<link rel="stylesheet" href="css/style.css?v=web-v2.5.0">
+<link rel="stylesheet" href="css/style.css?v=web-v2.5.1">
 </head>
 <body>
 
@@ -400,21 +400,19 @@
 <!-- Text scanner (beta) -->
 <div id="textOverlay" class="no-print">
   <div id="textBox">
-    <div id="textStage">
-      <video id="textVideo" playsinline muted autoplay></video>
-    </div>
-    <div id="textStatus">Point the camera at the sheet</div>
+    <div id="textStatus">Take a photo of the sheet</div>
     <div class="mbtns">
-      <button id="textCapture" class="primary">Capture</button>
+      <button id="textTakePhoto" class="primary">Take photo</button>
       <button id="textUsePhoto">Scan from photo</button>
       <button id="textCancel">Cancel</button>
     </div>
+    <input type="file" id="textCameraInput" accept="image/*" capture="environment" style="display:none">
     <input type="file" id="textFileInput" accept="image/*" style="display:none">
   </div>
 </div>
 
-<script src="js/model.js?v=web-v2.5.0"></script>
-<script src="js/scan-parse.js?v=web-v2.5.0"></script>
-<script src="js/app.js?v=web-v2.5.0"></script>
+<script src="js/model.js?v=web-v2.5.1"></script>
+<script src="js/scan-parse.js?v=web-v2.5.1"></script>
+<script src="js/app.js?v=web-v2.5.1"></script>
 </body>
 </html>
