@@ -8,7 +8,7 @@
   var M = window.JM;
   // Single source of truth for the displayed version (Projects title).
   // Bump this with every release, alongside the ?v= cache-busters.
-  var APP_VERSION = '2.5.2';
+  var APP_VERSION = '2.6.0';
 
   function el(id) { return document.getElementById(id); }
 
@@ -200,18 +200,118 @@
     VIEWS.forEach(function (v) { el('view-' + v).classList.toggle('active', v === name); });
     window.scrollTo(0, 0);
     padQueue.length = 0; // drop any in-flight multi-touch presses on navigation
+    armBackGuard();
+  }
+
+  /* ------------------------------------------------- back gesture (Android)
+   * The app never touched the History API, so the system back gesture
+   * closed it from anywhere — mid-flow, mid-scan, anywhere. One guard
+   * entry keeps popstate firing instead: a back press unwinds exactly
+   * one layer (popup, scanner overlay, view) and the guard is re-armed
+   * so the next back press does the same. Only at the home screen,
+   * with nothing open, does back do nothing and leave the guard down —
+   * so the NEXT back press exits the app, as Android users expect.
+   * Forward navigation never pushes entries (the guard is a single
+   * re-armed entry, not a stack), so programmatic closes need no
+   * history bookkeeping at all. */
+  var backGuardLive = false;
+  function armBackGuard() {
+    if (backGuardLive) return;
+    try { window.history.pushState({ jeansmixingBack: true }, ''); backGuardLive = true; } catch (e) {}
+  }
+  function onBackPressed() {
+    backGuardLive = false; // the guard was just popped
+    if (goBackOne()) armBackGuard();
+  }
+  window.addEventListener('popstate', onBackPressed);
+  /** Unwind one layer. Returns true if anything happened. */
+  function goBackOne() {
+    if (modalIsOpen) { dismissModal(); return true; }
+    if (textOverlayOpen()) { cancelTextScan(); return true; }
+    if (qrOverlayOpen()) { stopQrScanner(); return true; }
+    if (el('scanOverlay').classList.contains('open')) { hideScan(); return true; }
+    if (cropState) { cropFinish(cropState.src); return true; } // back skips the crop: scan the original photo
+    return goBackView();
+  }
+  /** Back from Settings, shared by the Settings back button and the
+      back gesture: return to wherever Settings was opened from. */
+  function backFromSettings() {
+    switch (settingsReturn) {
+      case 'entry': showEntry(); break;
+      case 'review': showReview(); break;
+      case 'locked': showLocked(); break;
+      case 'placing': showPlacing(); break;
+      case 'box': showBox(boxIdx); break;
+      case 'stapling': showStapling(); break;
+      case 'mixplacing': showMixPlacing(); break;
+      case 'mixbox': showMixBox(mixBoxIdx); break;
+      default: showProjects();
+    }
+  }
+  /** Go back one view, mirroring the on-screen Back buttons (which now
+      call this too, so there is one source of truth). Returns false at
+      the home screen, where there is nowhere to go back to. */
+  function goBackView() {
+    switch (currentView) {
+      case 'entry': saveDraft(); showProjects(); return true;
+      case 'review': showEntry(); return true;
+      case 'locked': showProjects(); return true;
+      case 'placing':
+        if (reviewing) {
+          var rp = activeProject();
+          reviewing = false;
+          current = rp ? rp.entries.length : 0;
+          renderPlacing();
+          return true;
+        }
+        showLocked(); return true;
+      case 'box': showPlacing(); return true;
+      case 'stapling': showPlacing(); return true;
+      case 'settings': backFromSettings(); return true;
+      case 'bundles': onBundlesDone(); return true;
+      case 'mixsizes': showProjects(); return true;
+      case 'mixcapacity': showMixSizes(); return true;
+      case 'mixboxes': showMixCapacity(); return true;
+      case 'mixplacing': showProjects(); return true;
+      case 'mixbox': showMixPlacing(); return true;
+      case 'leaderboard':
+        if (leaderboardReturn === 'complete') showPlacing();
+        else showSettings();
+        return true;
+      default: return false; // 'projects' — the root
+    }
   }
 
   /* ------------------------------------------------------------------ modal */
   // True while a popup is open; the physical-keyboard handler uses it so
   // keys never type into the pad behind a popup.
   var modalIsOpen = false;
+  // The current popup's close, and its on-dismiss cleanup (see below).
+  var modalClose = null, modalOnDismiss = null;
+  /** Close the open popup, if any, without running any button. */
+  function closeModal() { if (modalClose) modalClose(); }
+  /** Dismiss the open popup the way the back gesture / tapping outside
+      does: close it, then run its on-dismiss cleanup (a plain close
+      would strand state — e.g. the scan-summary popups hold pages that
+      only their Cancel buttons drop, so they pass an onDismiss that
+      drops them; a dismissed scan just starts fresh on the next tap). */
+  function dismissModal() {
+    var f = modalOnDismiss;
+    closeModal();
+    if (f) f();
+  }
   function showModal(o) {
     var ov = el('modalOverlay'), box = el('modalBox');
     box.innerHTML = '';
     box.classList.remove('qr-full');
     box.scrollTop = 0;
-    function close() { modalIsOpen = false; ov.classList.remove('open'); box.innerHTML = ''; }
+    function close() {
+      modalIsOpen = false; modalClose = null; modalOnDismiss = null;
+      ov.classList.remove('open'); box.innerHTML = '';
+    }
+    modalClose = close;
+    modalOnDismiss = o.onDismiss || null;
+    armBackGuard();
     if (o.title) {
       var h = document.createElement('h3');
       h.textContent = o.title;
@@ -1096,6 +1196,7 @@
       if (!cropWired) { wireCrop(); cropWired = true; }
       hideScan();
       el('cropOverlay').classList.add('open');
+      armBackGuard();
       // Open first: the stage measures 0 while the overlay is hidden.
       var canvas = el('cropCanvas');
       var fit = cropFit(srcCanvas.width, srcCanvas.height);
@@ -1191,6 +1292,7 @@
   function startQrScanner() {
     qrStatus('Starting camera…');
     el('qrOverlay').classList.add('open');
+    armBackGuard();
     ensureJsQr().then(function (ok) {
       if (!qrOverlayOpen()) return; // cancelled while the reader loaded
       if (!ok) {
@@ -1372,7 +1474,14 @@
    * finds almost nothing, or more bad rows than good ones, says so in
    * the summary ("this looks blurry — tap Retry for a clearer shot"):
    * alex's first live attempt found 1 row because the photo was out
-   * of focus, and the app had silently accepted it. */
+   * of focus, and the app had silently accepted it.
+   * v2.6.0: back works now. The app never touched the History API, so
+   * the system back gesture closed it from anywhere; one re-armed
+   * guard entry makes back unwind one layer instead (popup, scanner
+   * overlay, view) and only at the home screen does the next back
+   * press exit. Tapping the dim area outside a popup closes it too.
+   * The on-screen Back buttons all call the same goBackView the
+   * gesture uses, so there is one source of truth. */
   var PADDLE_READ_SRC = 'js/paddleocr/paddleocr.min.js?v=web-v' + APP_VERSION;
   var textPages = []; // per-page OCR item lists, in page order
   var textReading = false;
@@ -1444,6 +1553,7 @@
       : 'Tap Take photo to photograph page ' + textPageNo() + ', or Scan from photo to pick one.');
     el('textOverlay').classList.add('open');
     setTextButtonsDisabled(false);
+    armBackGuard();
     /* The camera waits for Take photo (v2.5.2) — opening the scanner
        used to jump straight into the camera app, so reaching Scan from
        photo meant dismissing the camera first. Take photo's tap is the
@@ -1537,6 +1647,7 @@
       showModal({
         title: 'Page 1 read',
         message: summary,
+        onDismiss: function () { textPages = []; },
         buttons: [
           {
             label: 'Scan next page', primary: true,
@@ -1566,6 +1677,7 @@
     showModal({
       title: 'Both pages read',
       message: bothMsg,
+      onDismiss: function () { textPages = []; },
       buttons: [
         {
           label: 'Create project', primary: true,
@@ -4287,7 +4399,7 @@
     };
     el('projectsSettings').onclick = function () { settingsReturn = 'projects'; showSettings('defaults'); };
     // entry
-    el('entryBack').onclick = function () { saveDraft(); showProjects(); };
+    el('entryBack').onclick = goBackView;
     el('entryScan').onclick = onScanTap;
     el('qrCancel').onclick = function () { stopQrScanner(); };
     el('qrUsePhoto').onclick = function () {
@@ -4339,23 +4451,14 @@
     wirePadButton(el('padBack'), onBackspace);
     wirePadButton(el('padEnter'), onEntryNext);
     // review
-    el('reviewBack').onclick = function () { showEntry(); };
+    el('reviewBack').onclick = goBackView;
     el('confirmBtn').onclick = onConfirm;
     // locked
-    el('lockedBack').onclick = function () { showProjects(); };
+    el('lockedBack').onclick = goBackView;
     el('printBtn').onclick = function () { window.print(); };
     el('startPlacingBtn').onclick = function () { showPlacing(); };
     // placing
-    el('placingBack').onclick = function () {
-      if (reviewing) {
-        var rp = activeProject();
-        reviewing = false;
-        current = rp ? rp.entries.length : 0;
-        renderPlacing();
-        return;
-      }
-      showLocked();
-    };
+    el('placingBack').onclick = goBackView;
     el('sizeBig').onclick = onSizeJump;
     el('placedView').onclick = onPlacedTap;
     el('placeUndo').onclick = onUndo;
@@ -4529,7 +4632,7 @@
     renderPlacing();
   }
     el('resetPlacingBtn').onclick = onResetPlacing;
-    el('completeBack').onclick = function () { showProjects(); };
+    el('completeBack').onclick = goBackView;
     el('completeLeaderboardBtn').onclick = function () { showLeaderboard('complete'); };
     el('completeReviewBtn').onclick = function () { showPlacingReview(); };
     el('completeBoxesBtn').onclick = function () { onBoxMenu(); };
@@ -4537,10 +4640,7 @@
       var p = activeProject();
       if (p) showProjectBreaks(p);
     };
-    el('leaderboardBack').onclick = function () {
-      if (leaderboardReturn === 'complete') showPlacing();
-      else showSettings();
-    };
+    el('leaderboardBack').onclick = goBackView;
     el('shareAppBtn').onclick = function () { showSharePopup(); };
     el('leaderboardBtn').onclick = function () { showLeaderboard('settings'); };
     el('breakAddBtn').onclick = function () {
@@ -4579,25 +4679,13 @@
       el('view-leaderboard').addEventListener('touchend', end('leaderboard'));
     })();
     // box detail
-    el('boxBack').onclick = function () { showPlacing(); };
+    el('boxBack').onclick = goBackView;
     // stapling
-    el('stapleBack').onclick = function () { showPlacing(); };
+    el('stapleBack').onclick = goBackView;
     el('stapleDone').onclick = onStapleDone;
     el('stapleCancel').onclick = function () { showPlacing(); };
     // settings
-    el('settingsBack').onclick = function () {
-      switch (settingsReturn) {
-        case 'entry': showEntry(); break;
-        case 'review': showReview(); break;
-        case 'locked': showLocked(); break;
-        case 'placing': showPlacing(); break;
-        case 'box': showBox(boxIdx); break;
-        case 'stapling': showStapling(); break;
-        case 'mixplacing': showMixPlacing(); break;
-        case 'mixbox': showMixBox(mixBoxIdx); break;
-        default: showProjects();
-      }
-    };
+    el('settingsBack').onclick = goBackView;
     el('setPairs').addEventListener('change', function () {
       var t = settingsTarget();
       var v = Math.max(1, parseInt(el('setPairs').value, 10) || t.pairsPerBox);
@@ -4687,10 +4775,10 @@
       saveSettingsTarget();
       renderBundles();
     };
-    el('bundlesBack').onclick = onBundlesDone;
+    el('bundlesBack').onclick = goBackView;
     el('bundlesDone').onclick = onBundlesDone;
     // straight mix
-    el('mixSizesBack').onclick = function () { showProjects(); };
+    el('mixSizesBack').onclick = goBackView;
     el('mixSizesAdd').onclick = function () {
       var p = activeProject();
       if (!p) return;
@@ -4714,7 +4802,7 @@
       persist();
       showMixCapacity();
     };
-    el('mixCapBack').onclick = function () { showMixSizes(); };
+    el('mixCapBack').onclick = goBackView;
     el('mixCapDone').onclick = function () {
       var p = activeProject();
       if (!p) return showProjects();
@@ -4724,7 +4812,7 @@
       persist();
       showMixBoxes();
     };
-    el('mixBoxesBack').onclick = function () { showMixCapacity(); };
+    el('mixBoxesBack').onclick = goBackView;
     el('mixBoxesOverride').onclick = function () {
       var p = activeProject();
       if (!p) return showProjects();
@@ -4741,7 +4829,7 @@
       toast('Project saved');
       showMixPlacing();
     };
-    el('mixPlacingBack').onclick = function () { showProjects(); };
+    el('mixPlacingBack').onclick = goBackView;
     el('mixSizeBig').onclick = onMixSizeJump;
     el('mixPlacingTitle').onclick = onMixSizeJump;
     el('mixLeft').onclick = function () {
@@ -4761,10 +4849,16 @@
     el('mixUndo').onclick = onMixUndo;
     el('mixFinishSize').onclick = askMixLeftOff;
     el('mixBoxMenuBtn').onclick = onMixBoxMenu;
-    el('mixBoxBack').onclick = function () { showMixPlacing(); };
+    el('mixBoxBack').onclick = goBackView;
     el('mixConsolidateBack').onclick = function () { showProjects(); };
     el('mixPlacingSettings').onclick = function () { settingsReturn = 'mixplacing'; showSettings('project', activeProject()); };
     el('mixBoxSettings').onclick = function () { settingsReturn = 'mixbox'; showSettings('project', activeProject()); };
+    // Tapping the dim area outside a popup closes it (back gesture does
+    // the same via popstate). A tap on the popup itself must not close
+    // it, so only the overlay — never the box — dismisses.
+    el('modalOverlay').addEventListener('click', function (ev) {
+      if (ev.target === el('modalOverlay')) dismissModal();
+    });
   }
 
   document.addEventListener('DOMContentLoaded', function () {
