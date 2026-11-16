@@ -173,6 +173,14 @@ button:disabled { opacity: 0.35; }
 #qrStatus { color: #fff; text-align: center; margin: 0.889rem 0; line-height: 1.45; }
 #qrOverlay .mbtns { display: flex; flex-direction: column; gap: 0.556rem; }
 #qrOverlay .mbtns button { width: 100%; }
+#textOverlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.85); align-items: flex-start; justify-content: center; z-index: 103; overflow-y: auto; padding: 1rem; }
+#textOverlay.open { display: flex; }
+#textBox { width: 100%; max-width: 30rem; margin: auto; }
+#textStage { position: relative; width: 100%; aspect-ratio: 4/3; background: #000; border-radius: 0.778rem; overflow: hidden; }
+#textVideo { width: 100%; height: 100%; object-fit: cover; display: block; }
+#textStatus { color: #fff; text-align: center; margin: 0.889rem 0; line-height: 1.45; }
+#textOverlay .mbtns { display: flex; flex-direction: column; gap: 0.556rem; }
+#textOverlay .mbtns button { width: 100%; }
 #cropBox { background: var(--card); color: var(--ink); padding: 0.889rem; border-radius: 0.667rem; width: 94%; max-width: 30rem; margin: 1rem auto; text-align: center; }
 #cropTitle { font-size: 1.15rem; font-weight: bold; }
 #cropStage { position: relative; margin: 0.667rem auto; touch-action: none; }

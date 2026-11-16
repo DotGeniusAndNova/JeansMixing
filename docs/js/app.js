@@ -8,7 +8,7 @@
   var M = window.JM;
   // Single source of truth for the displayed version (Projects title).
   // Bump this with every release, alongside the ?v= cache-busters.
-  var APP_VERSION = '2.4.1';
+  var APP_VERSION = '2.5.0';
 
   function el(id) { return document.getElementById(id); }
 
@@ -192,19 +192,26 @@
     'mixsizes', 'mixcapacity', 'mixboxes', 'mixplacing', 'mixbox', 'leaderboard'];
   // Where Back from Settings should return to ('projects' or 'entry').
   var settingsReturn = 'projects';
+  // The view currently on screen; the physical-keyboard handler uses it
+  // so keys only type into the pad on the entry screen.
+  var currentView = 'projects';
   function show(name) {
+    currentView = name;
     VIEWS.forEach(function (v) { el('view-' + v).classList.toggle('active', v === name); });
     window.scrollTo(0, 0);
     padQueue.length = 0; // drop any in-flight multi-touch presses on navigation
   }
 
   /* ------------------------------------------------------------------ modal */
+  // True while a popup is open; the physical-keyboard handler uses it so
+  // keys never type into the pad behind a popup.
+  var modalIsOpen = false;
   function showModal(o) {
     var ov = el('modalOverlay'), box = el('modalBox');
     box.innerHTML = '';
     box.classList.remove('qr-full');
     box.scrollTop = 0;
-    function close() { ov.classList.remove('open'); box.innerHTML = ''; }
+    function close() { modalIsOpen = false; ov.classList.remove('open'); box.innerHTML = ''; }
     if (o.title) {
       var h = document.createElement('h3');
       h.textContent = o.title;
@@ -262,6 +269,7 @@
       });
     }
     ov.classList.add('open');
+    modalIsOpen = true;
     if (inputEl) { inputEl.focus(); inputEl.select(); }
   }
 
@@ -619,12 +627,22 @@
       sz.className = 'sz';
       if (e.scanFlag) {
         sz.textContent = '\u26A0 Check this row';
-        var raw = document.createElement('div');
-        raw.className = 'flag-raw';
-        raw.textContent = 'Scanned as: ' + (e.scanFlag.raw || '(unreadable)') +
-          (e.scanFlag.reason === 'duplicate' ? ' \u2014 already in the list' : '') +
-          (e.scanFlag.reason === 'missing' ? ' \u2014 not found on the page' : '');
-        sz.appendChild(raw);
+        /* The plain text the engine actually read shows only in
+           experimental mode — it's a debugging aid for the developers
+           (alex and Nova), not something every user needs. The reason
+           note (not found / a guess) always shows. */
+        var note = '';
+        if (e.scanFlag.reason === 'duplicate') note = 'already in the list';
+        else if (e.scanFlag.reason === 'missing') note = 'not found on the page';
+        else if (e.scanFlag.reason === 'guessed') note = 'quantity was a guess — check it';
+        if (settings.experimental || note) {
+          var raw = document.createElement('div');
+          raw.className = 'flag-raw';
+          raw.textContent = settings.experimental
+            ? 'Scanned as: ' + (e.scanFlag.raw || '(unreadable)') + (note ? ' \u2014 ' + note : '')
+            : note;
+          sz.appendChild(raw);
+        }
       } else {
         sz.textContent = M.displaySize(e.waist, e.length);
       }
@@ -642,9 +660,11 @@
         var v = parseInt(qty.value, 10);
         if (e.scanFlag) {
           if (!isNaN(v) && v >= 0) {
-            if (e.scanFlag.reason === 'missing' && v === 0) {
-              // A missing size confirmed at zero means "don't input
-              // it": the row goes away instead of lingering as a 0.
+            if (v === 0) {
+              // A flagged row confirmed at zero means "don't input
+              // it": the row goes away instead of lingering as a 0 —
+              // whether the reader missed the size, couldn't read its
+              // quantity, or only guessed a zero.
               p.entries.splice(pos, 1);
               persist(); renderReview();
               return;
@@ -726,12 +746,7 @@
     var total = p.entries.reduce(function (s, e) { return s + e.qty; }, 0);
     var cap = (p.pairsPerBox > 0) ? p.pairsPerBox : M.BOX_CAPACITY;
     if (total % cap !== 0) {
-      showModal({
-        title: "Something's wrong",
-        message: 'The total is ' + total + ' pairs, which isn\'t divisible by ' + cap + '. ' +
-                 'Check your quantities and try again.',
-        buttons: [{ label: 'OK', primary: true }]
-      });
+      showDivisibilityWarning(total, cap);
       return;
     }
     var boxes = total / cap;
@@ -1100,8 +1115,17 @@
   }
 
   function onScanTap() {
-    // QR codes only now — the old text reading (OCR) is retired.
-    startQrScanner();
+    // The camera button offers both readers: the printed sheet (text,
+    // beta) or a project QR code.
+    showModal({
+      title: 'Scan',
+      message: 'Read the printed sheet, or scan a project QR code.',
+      buttons: [
+        { label: 'Scan text (beta)', primary: true, onClick: function () { startTextScanner(); } },
+        { label: 'QR code', onClick: function () { startQrScanner(); } },
+        { label: 'Cancel' }
+      ]
+    });
   }
 
   /* ------------------------------------------------------------- QR scanner
@@ -1327,6 +1351,317 @@
     showReview();
   }
 
+  /* ------------------------------------------------------- text scanner (beta)
+   * The entry screen's camera button also offers "Scan text (beta)": the
+   * printed sheet is read with PaddleOCR (tiny model, on-device) and a
+   * per-size lookup — find each known size token, read the number right
+   * after it. The reader is vendored with the app (js/paddleocr/, plus
+   * the onnxruntime wasm in js/ort/) and loaded from local files, just
+   * like the QR reader — no CDN fetch at scan time. Two pages, as
+   * usual: page 1, then page 2, then Create project. */
+  var PADDLE_READ_SRC = 'js/paddleocr/paddleocr.min.js?v=web-v' + APP_VERSION;
+  var textStream = null, textPermTimer = null;
+  var textPages = []; // per-page OCR item lists, in page order
+  var textReading = false;
+  var paddleOcrPromise = null;
+
+  function textOverlayOpen() { return el('textOverlay').classList.contains('open'); }
+  function textStatus(text) { el('textStatus').textContent = text; }
+  function textPageNo() { return textPages.length + 1; }
+
+  function setTextButtonsDisabled(disabled) {
+    ['textCapture', 'textUsePhoto', 'textCancel'].forEach(function (id) {
+      el(id).disabled = disabled;
+    });
+  }
+
+  function ensurePaddle() {
+    if (typeof PaddleOCRBundle !== 'undefined' && PaddleOCRBundle.PaddleOCR) {
+      return Promise.resolve(true);
+    }
+    return loadScript(PADDLE_READ_SRC).then(function (ok) {
+      return ok && typeof PaddleOCRBundle !== 'undefined' && PaddleOCRBundle.PaddleOCR;
+    });
+  }
+
+  /* The app's own directory URL, so the reader's files resolve the same
+     way from any thread (the reader runs in a worker). Falls back to
+     relative paths when there is no location (node tests). */
+  function appBaseUrl() {
+    try {
+      var href = (window.location && window.location.href) || '';
+      return href.replace(/[^/]*$/, '');
+    } catch (e) { return ''; }
+  }
+
+  /** The OCR engine, created once and reused. The models and the wasm
+      runtime are local files; the first creation downloads the wasm
+      (about 30MB, once — the service worker caches it after). */
+  function ensurePaddleOcr() {
+    if (paddleOcrPromise) return paddleOcrPromise;
+    paddleOcrPromise = ensurePaddle().then(function (ok) {
+      if (!ok) throw new Error('paddle load failed');
+      var base = appBaseUrl();
+      var v = '?v=web-v' + APP_VERSION;
+      return PaddleOCRBundle.PaddleOCR.create({
+        lang: 'en',
+        textDetectionModelName: 'PP-OCRv6_tiny_det',
+        textDetectionModelAsset: { url: base + 'js/paddleocr/tiny_det.tar' + v },
+        textRecognitionModelName: 'PP-OCRv6_tiny_rec',
+        textRecognitionModelAsset: { url: base + 'js/paddleocr/tiny_rec.tar' + v },
+        ortOptions: { backend: 'wasm', wasmPaths: base + 'js/ort/', numThreads: 1, simd: true }
+      });
+    }).catch(function (e) { paddleOcrPromise = null; throw e; });
+    return paddleOcrPromise;
+  }
+
+  function stopTextScanner() {
+    clearTimeout(textPermTimer);
+    textPermTimer = null;
+    if (textStream) {
+      textStream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) {} });
+      textStream = null;
+    }
+    var v = el('textVideo');
+    if (v) {
+      if (typeof v.pause === 'function') { try { v.pause(); } catch (e) {} }
+      v.srcObject = null;
+    }
+    el('textOverlay').classList.remove('open');
+  }
+
+  /** Cancel the whole text scan (drops any pages already read). */
+  function cancelTextScan() {
+    textPages = [];
+    stopTextScanner();
+  }
+
+  function startTextScanner() {
+    textStatus(textPages.length === 0
+      ? 'Point the camera at page 1 of the sheet, then tap Capture.'
+      : 'Point the camera at page ' + textPageNo() + ' of the sheet, then tap Capture.');
+    el('textOverlay').classList.add('open');
+    setTextButtonsDisabled(false);
+    ensurePaddle().then(function (ok) {
+      if (!textOverlayOpen()) return; // cancelled while the reader loaded
+      if (!ok) {
+        textStatus('Couldn’t load the text reader — reload the app and try again, or use a photo instead.');
+        return;
+      }
+      var nav = (typeof navigator !== 'undefined') ? navigator : null;
+      if (!nav || !nav.mediaDevices || !nav.mediaDevices.getUserMedia) {
+        textStatus('This device has no camera to use here — use a photo instead.');
+        return;
+      }
+      textStatus('Waiting for camera permission — allow the camera when asked.');
+      textPermTimer = setTimeout(function () {
+        if (textOverlayOpen() && !textStream) {
+          textStatus('Still waiting for camera permission — if you don’t see a prompt, tap Cancel and try again.');
+        }
+      }, 15000);
+      nav.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false })
+        .then(function (stream) {
+          clearTimeout(textPermTimer);
+          textPermTimer = null;
+          if (!textOverlayOpen()) {
+            stream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) {} });
+            return;
+          }
+          textStream = stream;
+          var v = el('textVideo');
+          v.srcObject = stream;
+          if (typeof v.play === 'function') {
+            var pr = v.play();
+            if (pr && pr.catch) pr.catch(function () {});
+          }
+          textStatus('Point the camera at page ' + textPageNo() + ' of the sheet, then tap Capture.');
+        })
+        .catch(function (err) {
+          clearTimeout(textPermTimer);
+          textPermTimer = null;
+          if (!textOverlayOpen()) return;
+          var name = err && err.name;
+          if (name === 'NotAllowedError' || name === 'SecurityError') {
+            textStatus('Camera access is blocked — allow the camera for this site, or use a photo instead.');
+          } else if (name === 'NotFoundError' || name === 'OverconstrainedError') {
+            textStatus('No camera was found on this device — use a photo instead.');
+          } else {
+            textStatus('The camera couldn’t start — use a photo instead.');
+          }
+        });
+    });
+  }
+
+  /** The Capture button: grab the current camera frame and read it. */
+  function textCapture() {
+    if (textReading) return;
+    var v = el('textVideo');
+    if (!v || !v.videoWidth) {
+      textStatus('The camera isn’t ready yet — wait a second and try again.');
+      return;
+    }
+    var canvas = document.createElement('canvas');
+    var scale = Math.min(1, 2048 / Math.max(v.videoWidth, v.videoHeight));
+    canvas.width = Math.max(1, Math.round(v.videoWidth * scale));
+    canvas.height = Math.max(1, Math.round(v.videoHeight * scale));
+    var ctx = canvas.getContext('2d');
+    ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
+    runTextRead(canvas);
+  }
+
+  function onTextPhotoChange(ev) {
+    var files = (ev.target && ev.target.files) || [];
+    if (!files.length) return;
+    var file = files[0];
+    ev.target.value = '';
+    readTextPhoto(file);
+  }
+
+  /** "Scan from photo": read a photo from the gallery/files, like the QR
+      scanner's photo fallback. The file goes straight to the reader —
+      no canvas round-trip, so the reader sees the photo's original
+      bytes (re-encoding to JPEG first can blur the small digits). */
+  function readTextPhoto(file) {
+    if (!file) return;
+    runTextReadBlob(file);
+  }
+
+  /** Read one page (a canvas) with the engine and handle the result.
+      The engine runs in its own worker, so the page stays responsive
+      while it reads — a page takes a few seconds. */
+  function runTextRead(canvas) {
+    if (textReading) return;
+    var blobP = new Promise(function (resolve) {
+      if (canvas.toBlob) canvas.toBlob(function (b) { resolve(b); }, 'image/jpeg', 0.92);
+      else resolve(null);
+    });
+    blobP.then(function (blob) {
+      if (!blob) {
+        textStatus('Couldn’t read that photo — try a clearer shot, or use a photo instead.');
+        return;
+      }
+      runTextReadBlob(blob);
+    });
+  }
+
+  /** The shared read: a Blob (a photo file, or a camera frame) goes to
+      the engine, and the items come back for the page result. */
+  function runTextReadBlob(blob) {
+    if (textReading) return;
+    textReading = true;
+    textStatus('Reading page ' + textPageNo() + '… this takes a few seconds.');
+    setTextButtonsDisabled(true);
+    ensurePaddleOcr().then(function (ocr) {
+      return ocr.predict(blob);
+    }).then(function (res) {
+      textReading = false;
+      var items = (res && res[0] && res[0].items) || [];
+      stopTextScanner();
+      handleTextPage(items);
+    }).catch(function (e) {
+      textReading = false;
+      setTextButtonsDisabled(false);
+      textStatus('Couldn’t read that photo — try a clearer shot, or use a photo instead.');
+    });
+  }
+
+  /** One page came back from the engine: keep its items, then show what
+      was read and offer the next step. Page 1 offers Retry / Scan next
+      page; page 2 offers Retry / Create project. The page-1 summary
+      counts only this page (sizes on the next page aren't "missing"
+      yet); the page-2 summary is the merged result over both pages. */
+  function handleTextPage(items) {
+    textPages.push(items);
+    var pageNo = textPages.length;
+    if (pageNo === 1) {
+      var s = ScanParse.summarizePage(items);
+      var shown = s.sizes.slice(0, 8);
+      if (s.found > 8) shown.push('and ' + (s.found - 8) + ' more');
+      var summary = 'Page 1 read: ' + s.found + ' sizes, ' + s.total + ' pairs' +
+        (s.flagged ? ', ' + (s.flagged === 1 ? '1 row needs attention' : s.flagged + ' rows need attention') : '') +
+        (shown.length ? ' — ' + shown.join(', ') + '.' : '.');
+      showModal({
+        title: 'Page 1 read',
+        message: summary,
+        buttons: [
+          {
+            label: 'Scan next page', primary: true,
+            onClick: function () { startTextScanner(); }
+          },
+          {
+            label: 'Retry', onClick: function () { textPages.pop(); startTextScanner(); }
+          },
+          { label: 'Cancel', onClick: function () { textPages = []; } }
+        ]
+      });
+      return;
+    }
+    var merged = ScanParse.lookupPages(textPages);
+    var rows = merged.rows;
+    var ok = rows.filter(function (r) { return !r.flag; }).length;
+    var bad = rows.length - ok;
+    var total = rows.reduce(function (s, r) { return s + (r.qty || 0); }, 0);
+    var shown2 = rows.filter(function (r) { return !r.flag; }).slice(0, 8).map(function (r) {
+      return M.displaySize(r.waist, r.length);
+    });
+    if (ok > 8) shown2.push('and ' + (ok - 8) + ' more');
+    showModal({
+      title: 'Both pages read',
+      message: 'Both pages read: ' + ok + ' sizes, ' + total + ' pairs' +
+        (bad ? ', ' + (bad === 1 ? '1 row needs attention' : bad + ' rows need attention') : '') +
+        (shown2.length ? ' — ' + shown2.join(', ') + '.' : '.'),
+      buttons: [
+        {
+          label: 'Create project', primary: true,
+          onClick: function () { return createTextProject(); }
+        },
+        {
+          label: 'Retry', onClick: function () { textPages.pop(); startTextScanner(); }
+        },
+        { label: 'Cancel', onClick: function () { textPages = []; } }
+      ]
+    });
+  }
+
+  /** A text-scanned project starts fresh and unlocked, at the review
+      screen — the same as a QR-scanned one. If the total isn't
+      divisible by the box size, the "Something's wrong" popup shows the
+      second the review screen opens (and again on Confirm). */
+  function createTextProject() {
+    var merged = ScanParse.lookupPages(textPages);
+    textPages = [];
+    var name = M.Store.uniqueName(projects, M.projectDisplayName(new Date()));
+    var p = M.Store.blankProject(name);
+    p.mode = 'regular';
+    p.pairsPerBox = settings.pairsPerBox;
+    p.flippingEnabled = settings.flippingEnabled;
+    p.bundles = cloneBundles(settings.bundles);
+    projects.push(p);
+    ui.activeId = p.id;
+    persist();
+    importScan(merged);
+    var total = p.entries.reduce(function (s, e) { return s + e.qty; }, 0);
+    var cap = (p.pairsPerBox > 0) ? p.pairsPerBox : M.BOX_CAPACITY;
+    /* The warning replaces this modal's content, so the button wrapper
+       must not auto-close it — return false only when it opened. */
+    if (total % cap !== 0) {
+      showDivisibilityWarning(total, cap);
+      return false;
+    }
+    return undefined;
+  }
+
+  /** The "Something's wrong" popup, shared by Confirm and the text-scan
+      arrival check. */
+  function showDivisibilityWarning(total, cap) {
+    showModal({
+      title: "Something's wrong",
+      message: 'The total is ' + total + ' pairs, which isn\'t divisible by ' + cap + '. ' +
+               'Check your quantities and try again.',
+      buttons: [{ label: 'OK', primary: true }]
+    });
+  }
+
   function showScanChooser() {
     showModal({
       title: 'Scan sizes',
@@ -1523,7 +1858,10 @@
     function doImport() {
       p.entries = rows.map(function (r) {
         if (r.flag) {
-          return { waist: r.waist || '', length: r.length || '', qty: 0, scanFlag: { raw: r.raw, reason: r.flag } };
+          // A flagged row keeps its guessed quantity when it has one
+          // (a 'guessed' row), so alex only has to check it; rows with
+          // no quantity arrive at 0.
+          return { waist: r.waist || '', length: r.length || '', qty: (typeof r.qty === 'number' ? r.qty : 0), scanFlag: { raw: r.raw, reason: r.flag } };
         }
         return { waist: r.waist, length: r.length, qty: r.qty };
       });
@@ -3921,6 +4259,22 @@
         if (lift) lift.classList.add('pressed');
       }
     });
+    // Physical keyboard: digits, Enter and Backspace act like the on-screen
+    // pad, so the app can be driven (and tested) from a PC keyboard.
+    // Entry screen only, and never while a popup, the camera overlay or the
+    // crop tool is open, or while a text field has focus (keys go there).
+    // (The overlay check, not the scanning flag: the overlay opens before
+    // the camera stream starts, and keys must stay quiet the whole time.)
+    document.addEventListener('keydown', function (e) {
+      if (currentView !== 'entry') return;
+      if (modalIsOpen || qrOverlayOpen() || textOverlayOpen() || cropState) return;
+      var ae = document.activeElement;
+      if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT')) return;
+      var k = e.key;
+      if (k >= '0' && k <= '9') { onDigit(k); e.preventDefault(); }
+      else if (k === 'Enter') { onEntryNext(); e.preventDefault(); }
+      else if (k === 'Backspace') { onBackspace(); e.preventDefault(); }
+    });
     // projects
     function createRegularProject() {
       var name = M.Store.uniqueName(projects, M.projectDisplayName(new Date()));
@@ -3985,6 +4339,13 @@
       if (inp.click) inp.click();
     };
     el('qrFileInput').addEventListener('change', onQrPhotoChange);
+    el('textCancel').onclick = function () { cancelTextScan(); };
+    el('textCapture').onclick = function () { textCapture(); };
+    el('textUsePhoto').onclick = function () {
+      var inp = el('textFileInput');
+      if (inp.click) inp.click();
+    };
+    el('textFileInput').addEventListener('change', onTextPhotoChange);
     el('entrySettings').onclick = function () { saveDraft(); settingsReturn = 'entry'; showSettings('project', activeProject()); };
     // settings from anywhere: project mode (read-only after lock), back where you came from
     el('reviewSettings').onclick = function () { settingsReturn = 'review'; showSettings('project', activeProject()); };

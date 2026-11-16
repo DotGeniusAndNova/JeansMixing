@@ -11,7 +11,7 @@
 <!-- ?v= cache-buster: bump every release so phones fetch fresh files -->
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-<link rel="stylesheet" href="css/style.css?v=web-v2.4.1a">
+<link rel="stylesheet" href="css/style.css?v=web-v2.5.0">
 </head>
 <body>
 
@@ -397,8 +397,24 @@
   </div>
 </div>
 
-<script src="js/model.js?v=web-v2.4.1a"></script>
-<script src="js/scan-parse.js?v=web-v2.4.1a"></script>
-<script src="js/app.js?v=web-v2.4.1a"></script>
+<!-- Text scanner (beta) -->
+<div id="textOverlay" class="no-print">
+  <div id="textBox">
+    <div id="textStage">
+      <video id="textVideo" playsinline muted autoplay></video>
+    </div>
+    <div id="textStatus">Point the camera at the sheet</div>
+    <div class="mbtns">
+      <button id="textCapture" class="primary">Capture</button>
+      <button id="textUsePhoto">Scan from photo</button>
+      <button id="textCancel">Cancel</button>
+    </div>
+    <input type="file" id="textFileInput" accept="image/*" style="display:none">
+  </div>
+</div>
+
+<script src="js/model.js?v=web-v2.5.0"></script>
+<script src="js/scan-parse.js?v=web-v2.5.0"></script>
+<script src="js/app.js?v=web-v2.5.0"></script>
 </body>
 </html>

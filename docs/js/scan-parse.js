@@ -170,13 +170,168 @@
     return parseTemplateLines(String(data.text || '').split(/\n/));
   }
 
+  /* ------------------------------------------------- per-size lookup (Stage 2)
+   * The PaddleOCR text scanner reads the other way around from the old
+   * line parser: for each known size it finds that size's token on the
+   * page and reads the number immediately to its right on the same row.
+   * Proven on alex's real sheets: 23/23 (Jeds 750) and 32/32 (Reg 875),
+   * zero wrong numbers. Row spacing on the photos is ~21px and true
+   * size/qty pairs sit within ~2px, so the +-10px band keeps every true
+   * pair and kills cross-row grabs. Never pool pages: the lookup runs
+   * per page, and pages merge afterwards. */
+  var LOOKUP_BAND = 10; // px, same-row band around the size token's centre
+  var LOOKUP_REACH = 300; // px, how far right of the size token a qty may sit
+  /* Qty-slot letters: a letter in the QUANTITY slot only is a misread
+     digit — the slot must always be a number. C, O, Q and D are all
+     round like 0, so each maps to 0. The result is a GUESS, flagged for
+     review, never silently trusted. (No 'n' — alex's call: 'n' is not
+     a 0.) Never applied to the size token itself: ODD has a real O. */
+  var QTY_LETTERS = { C: '0', O: '0', Q: '0', D: '0' };
+
+  /* Size tokens: uppercase, runs of x-like chars (x/X/×) collapse to one
+     X, whitespace stripped. So "44x×32" reads as "44x32". */
+  function normalizeSizeToken(s) {
+    return String(s == null ? '' : s).toUpperCase().replace(/[X×]+/g, 'X').replace(/\s+/g, '');
+  }
+
+  /* A quantity token, normalized: pure digits pass through; a token of
+     digits plus round letters (C/O/Q/D) becomes its digit form — a
+     guess. Anything else (a letter that isn't a round 0, like B) is not
+     a quantity at all, so it returns null. In-token too: "o0" -> "00". */
+  function normalizeQtyToken(s) {
+    var up = String(s == null ? '' : s).toUpperCase();
+    if (up === '') return null;
+    var out = '';
+    for (var i = 0; i < up.length; i++) {
+      var ch = up[i];
+      if (ch >= '0' && ch <= '9') out += ch;
+      else if (QTY_LETTERS[ch]) out += QTY_LETTERS[ch];
+      else return null;
+    }
+    return out;
+  }
+
+  /* PaddleOCR items carry a polygon; reduce one to its bounding box. */
+  function itemBox(it) {
+    var poly = (it && it.poly) || [];
+    if (!poly.length) return null;
+    var xs = poly.map(function (p) { return p[0]; });
+    var ys = poly.map(function (p) { return p[1]; });
+    var x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs);
+    var y0 = Math.min.apply(null, ys), y1 = Math.max.apply(null, ys);
+    return {
+      text: it.text, score: it.score,
+      x0: x0, y0: y0, x1: x1, y1: y1,
+      cx: (x0 + x1) / 2, cy: (y0 + y1) / 2
+    };
+  }
+
+  /* Look one size up on one page of OCR items. Returns:
+       {found:false} — the size token isn't on this page;
+       {found:true, qty:null, sizeText} — size found, no number beside it
+         (the lone-0 weak spot: the engine misses the 0 or reads it as
+         a letter, so the row comes back flagged, never as a wrong number);
+       {found:true, qty, exact:true, raw} — a pure-number quantity;
+       {found:true, qty, exact:false, raw} — a letter-normalized guess. */
+  function lookupSize(items, sizeText) {
+    var boxes = (items || []).map(itemBox).filter(function (b) { return !!b; });
+    var want = normalizeSizeToken(sizeText);
+    var s = null;
+    for (var i = 0; i < boxes.length; i++) {
+      if (normalizeSizeToken(boxes[i].text) === want) { s = boxes[i]; break; }
+    }
+    if (!s) return { found: false };
+    var cands = boxes.filter(function (it) {
+      var n = /^\d+$/.test(it.text) ? it.text : normalizeQtyToken(it.text);
+      if (n === null) return false;
+      return it.cx > s.x1 && Math.abs(it.cy - s.cy) < LOOKUP_BAND && (it.x0 - s.x1) < LOOKUP_REACH;
+    }).sort(function (a, b) { return a.x0 - b.x0; });
+    if (!cands.length) return { found: true, qty: null, sizeText: s.text };
+    var first = cands[0];
+    if (/^\d+$/.test(first.text)) {
+      return { found: true, qty: parseInt(first.text, 10), exact: true, raw: first.text };
+    }
+    return { found: true, qty: parseInt(normalizeQtyToken(first.text), 10), exact: false, raw: first.text };
+  }
+
+  /* Run the lookup over pages (each a list of OCR items, in page order).
+     Returns {rows} in the parseTemplateLines shape, in grid order: a
+     found qty above 0 becomes a row (guessed ones carry flag 'guessed'
+     and the raw token); a found qty of 0 exactly produces nothing; a
+     guessed 0, or a size found with no number beside it, becomes a
+     flagged qty-0 row for alex to confirm; a missing CORE size becomes
+     a flagged 'missing' row; a missing OPTIONAL size is skipped. */
+  function lookupPages(pages) {
+    var rows = [];
+    gridSizes().forEach(function (g) {
+      var sizeText = displaySize(g.waist, g.length);
+      var r = null;
+      for (var p = 0; p < (pages || []).length; p++) {
+        var rr = lookupSize(pages[p], sizeText);
+        if (rr.found) {
+          r = rr;
+          if (rr.qty !== null) break;
+        }
+      }
+      if (!r) {
+        if (!g.optional) {
+          rows.push({ flag: 'missing', raw: sizeText, waist: g.waist, length: g.length });
+        }
+        return;
+      }
+      if (r.qty === null) {
+        rows.push({ flag: 'unreadable', raw: r.sizeText || sizeText, waist: g.waist, length: g.length, qty: 0 });
+        return;
+      }
+      if (r.qty === 0) {
+        if (!r.exact) {
+          rows.push({ flag: 'guessed', raw: r.raw, waist: g.waist, length: g.length, qty: 0 });
+        }
+        return;
+      }
+      if (r.exact) {
+        rows.push({ waist: g.waist, length: g.length, qty: r.qty });
+      } else {
+        rows.push({ flag: 'guessed', raw: r.raw, waist: g.waist, length: g.length, qty: r.qty });
+      }
+    });
+    return { rows: rows };
+  }
+
+  /* One page, summarized for the after-scan modal: how many sizes were
+     found on THIS page, their total, and how many rows need attention.
+     Sizes not on this page at all are ignored here — they may be on the
+     next page; only the merged lookup (lookupPages over all pages) can
+     call a size missing. */
+  function summarizePage(items) {
+    var found = 0, total = 0, flagged = 0, sizes = [];
+    gridSizes().forEach(function (g) {
+      var r = lookupSize(items, displaySize(g.waist, g.length));
+      if (!r.found) return;
+      if (r.qty === null) { flagged++; return; }
+      if (r.qty > 0) {
+        found++; total += r.qty;
+        sizes.push(displaySize(g.waist, g.length));
+        if (!r.exact) flagged++;
+      } else if (!r.exact) {
+        flagged++;
+      }
+    });
+    return { found: found, total: total, flagged: flagged, sizes: sizes };
+  }
+
   var api = {
     gridSizes: gridSizes,
     normalizeLine: normalizeLine,
     extractFromLine: extractFromLine,
     parseTemplateLines: parseTemplateLines,
     groupWords: groupWords,
-    parseScanTemplate: parseScanTemplate
+    parseScanTemplate: parseScanTemplate,
+    normalizeSizeToken: normalizeSizeToken,
+    normalizeQtyToken: normalizeQtyToken,
+    lookupSize: lookupSize,
+    lookupPages: lookupPages,
+    summarizePage: summarizePage
   };
 
   if (typeof module !== 'undefined' && module.exports) {
