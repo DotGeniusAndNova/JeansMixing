@@ -8,7 +8,7 @@
   var M = window.JM;
   // Single source of truth for the displayed version (Projects title).
   // Bump this with every release, alongside the ?v= cache-busters.
-  var APP_VERSION = '2.7.0';
+  var APP_VERSION = '2.7.1';
 
   function el(id) { return document.getElementById(id); }
 
@@ -734,22 +734,18 @@
       sz.className = 'sz';
       if (e.scanFlag) {
         sz.textContent = '\u26A0 Check this row';
-        /* The plain text the engine actually read shows only in
-           experimental mode — it's a debugging aid for the developers
-           (alex and Nova), not something every user needs. The reason
-           note (not found / a guess) always shows. */
+        /* The plain text the engine actually read shows on every
+           flagged row, experimental mode or not (alex's call,
+           2026-11-15) — it tells him what size and quantity the
+           scan tried to read, so he can fix the row himself. */
         var note = '';
         if (e.scanFlag.reason === 'duplicate') note = 'already in the list';
         else if (e.scanFlag.reason === 'missing') note = 'not found on the page';
         else if (e.scanFlag.reason === 'guessed') note = 'quantity was a guess — check it';
-        if (settings.experimental || note) {
-          var raw = document.createElement('div');
-          raw.className = 'flag-raw';
-          raw.textContent = settings.experimental
-            ? 'Scanned as: ' + (e.scanFlag.raw || '(unreadable)') + (note ? ' \u2014 ' + note : '')
-            : note;
-          sz.appendChild(raw);
-        }
+        var raw = document.createElement('div');
+        raw.className = 'flag-raw';
+        raw.textContent = 'Scanned as: ' + (e.scanFlag.raw || '(unreadable)') + (note ? ' \u2014 ' + note : '');
+        sz.appendChild(raw);
       } else {
         sz.textContent = M.displaySize(e.waist, e.length);
       }
@@ -1496,7 +1492,9 @@
    * phone has no WebGPU adapter the create fails fast and the app
    * falls back to WebAssembly on its own. (Includes v2.6.0: this
    * branch is built on it, so pushing v2.7.0 ships the back work
-   * too.) */
+   * too.)
+   * v2.7.1: a flagged scan row always shows what the engine read
+   * ("Scanned as: …") — it used to hide behind experimental mode. */
   var PADDLE_READ_SRC = 'js/paddleocr/paddleocr.min.js?v=web-v' + APP_VERSION;
   var textPages = []; // per-page OCR item lists, in page order
   var textReading = false;
