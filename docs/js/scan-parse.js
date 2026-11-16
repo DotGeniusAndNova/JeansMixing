@@ -228,11 +228,27 @@
 
   /* Look one size up on one page of OCR items. Returns:
        {found:false} — the size token isn't on this page;
-       {found:true, qty:null, sizeText} — size found, no number beside it
-         (the lone-0 weak spot: the engine misses the 0 or reads it as
-         a letter, so the row comes back flagged, never as a wrong number);
-       {found:true, qty, exact:true, raw} — a pure-number quantity;
-       {found:true, qty, exact:false, raw} — a letter-normalized guess. */
+       {found:true, qty:null, sizeText, box} — size found, no number
+         beside it (the lone-0 weak spot: the engine misses the 0 or
+         reads it as a letter, so the row comes back flagged, never as
+         a wrong number);
+       {found:true, qty, exact:true, raw, box} — a pure-number quantity;
+       {found:true, qty, exact:false, raw, box} — a letter-normalized
+         guess.
+     box is the row's bounding box in the page image's pixels (the
+     size token's box widened to the quantity's), so the single-size
+     review can crop the row straight out of the photo. The engine
+     returns polygons in full-resolution image space (verified on
+     alex's sheets: y up to 1888 on a 2048-tall photo), so the box
+     maps 1:1 onto the photo as the browser shows it. */
+  function unionBox(a, b) {
+    if (!a) return b || null;
+    if (!b) return a;
+    return {
+      x0: Math.min(a.x0, b.x0), y0: Math.min(a.y0, b.y0),
+      x1: Math.max(a.x1, b.x1), y1: Math.max(a.y1, b.y1)
+    };
+  }
   function lookupSize(items, sizeText) {
     var boxes = (items || []).map(itemBox).filter(function (b) { return !!b; });
     var want = normalizeSizeToken(sizeText);
@@ -246,12 +262,13 @@
       if (n === null) return false;
       return it.cx > s.x1 && Math.abs(it.cy - s.cy) < LOOKUP_BAND && (it.x0 - s.x1) < LOOKUP_REACH;
     }).sort(function (a, b) { return a.x0 - b.x0; });
-    if (!cands.length) return { found: true, qty: null, sizeText: s.text };
+    if (!cands.length) return { found: true, qty: null, sizeText: s.text, box: { x0: s.x0, y0: s.y0, x1: s.x1, y1: s.y1 } };
     var first = cands[0];
+    var box = unionBox(s, first);
     if (/^\d+$/.test(first.text)) {
-      return { found: true, qty: parseInt(first.text, 10), exact: true, raw: first.text };
+      return { found: true, qty: parseInt(first.text, 10), exact: true, raw: first.text, box: box };
     }
-    return { found: true, qty: parseInt(normalizeQtyToken(first.text), 10), exact: false, raw: first.text };
+    return { found: true, qty: parseInt(normalizeQtyToken(first.text), 10), exact: false, raw: first.text, box: box };
   }
 
   /* Run the lookup over pages (each a list of OCR items, in page order).
@@ -265,11 +282,11 @@
     var rows = [];
     gridSizes().forEach(function (g) {
       var sizeText = displaySize(g.waist, g.length);
-      var r = null;
+      var r = null, rPage = -1;
       for (var p = 0; p < (pages || []).length; p++) {
         var rr = lookupSize(pages[p], sizeText);
         if (rr.found) {
-          r = rr;
+          r = rr; rPage = p;
           if (rr.qty !== null) break;
         }
       }
@@ -279,20 +296,23 @@
         }
         return;
       }
+      /* Every found row carries where it was read (page + box), so the
+         single-size review can crop it out of the photo. A missing row
+         has neither — the size wasn't on any page. */
       if (r.qty === null) {
-        rows.push({ flag: 'unreadable', raw: r.sizeText || sizeText, waist: g.waist, length: g.length, qty: 0 });
+        rows.push({ flag: 'unreadable', raw: r.sizeText || sizeText, waist: g.waist, length: g.length, qty: 0, box: r.box, page: rPage });
         return;
       }
       if (r.qty === 0) {
         if (!r.exact) {
-          rows.push({ flag: 'guessed', raw: r.raw, waist: g.waist, length: g.length, qty: 0 });
+          rows.push({ flag: 'guessed', raw: r.raw, waist: g.waist, length: g.length, qty: 0, box: r.box, page: rPage });
         }
         return;
       }
       if (r.exact) {
-        rows.push({ waist: g.waist, length: g.length, qty: r.qty });
+        rows.push({ waist: g.waist, length: g.length, qty: r.qty, box: r.box, page: rPage });
       } else {
-        rows.push({ flag: 'guessed', raw: r.raw, waist: g.waist, length: g.length, qty: r.qty });
+        rows.push({ flag: 'guessed', raw: r.raw, waist: g.waist, length: g.length, qty: r.qty, box: r.box, page: rPage });
       }
     });
     return { rows: rows };

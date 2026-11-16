@@ -8,7 +8,7 @@
   var M = window.JM;
   // Single source of truth for the displayed version (Projects title).
   // Bump this with every release, alongside the ?v= cache-busters.
-  var APP_VERSION = '2.8.0';
+  var APP_VERSION = '2.9.0';
 
   function el(id) { return document.getElementById(id); }
 
@@ -198,7 +198,7 @@
   applySettings();
 
   /* ------------------------------------------------------------ navigation */
-  var VIEWS = ['projects', 'entry', 'review', 'locked', 'placing', 'box', 'stapling', 'settings', 'advanced', 'bundles',
+  var VIEWS = ['projects', 'entry', 'review', 'sizereview', 'locked', 'placing', 'box', 'stapling', 'settings', 'advanced', 'bundles',
     'mixsizes', 'mixcapacity', 'mixboxes', 'mixplacing', 'mixbox', 'leaderboard'];
   // Where Back from Settings should return to ('projects' or 'entry').
   var settingsReturn = 'projects';
@@ -267,6 +267,7 @@
     switch (currentView) {
       case 'entry': saveDraft(); showProjects(); return true;
       case 'review': showEntry(); return true;
+      case 'sizereview': showReview(); return true;
       case 'locked': showProjects(); return true;
       case 'placing':
         if (reviewing) {
@@ -674,6 +675,16 @@
     var rows = el('reviewRows');
     rows.innerHTML = '';
     p.entries.forEach(function (e, pos) {
+      rows.appendChild(buildReviewRow(p, e, pos, renderReview));
+    });
+    updateReviewTotal();
+  }
+
+  /* One review row: the size (tap to edit in place), the quantity, the
+     delete button — shared by the list review and the single-size
+     review, so a fix in one place lands in both. rerender is the
+     screen to redraw after a change (renderReview / renderSizeReview). */
+  function buildReviewRow(p, e, pos, rerender) {
       var row = document.createElement('div');
       row.className = 'trow' + (pos % 2 === 1 ? ' alt' : '') + (e.scanFlag ? ' flag' : '');
       if (reviewSizeEdit && reviewSizeEdit.pos === pos) {
@@ -717,15 +728,30 @@
               return;
             }
           }
+          var wasAdded = !!(e.scanFlag && e.scanFlag.reason === 'added');
           e.waist = w;
           e.length = l;
           maybeClearScanFlag(e);
           reviewSizeEdit = null;
+          /* A hand-added row arranges itself by size once it has one:
+             the list stays in size order instead of stranding the new
+             row at the end. Only added rows re-sort — a scan or manual
+             list keeps the order it arrived in. (Checked before the
+             flag clears: a row whose quantity was set first loses its
+             flag the moment the size lands.) */
+          if (wasAdded) {
+            p.entries.sort(function (a, b) {
+              var dw = (parseInt(a.waist, 10) || 0) - (parseInt(b.waist, 10) || 0);
+              if (dw) return dw;
+              return (parseInt(a.length, 10) || 0) - (parseInt(b.length, 10) || 0);
+            });
+            sizeReviewIdx = p.entries.indexOf(e);
+          }
           persist();
-          renderReview();
+          rerender();
         }
         okBtn.onclick = saveSizeEdit;
-        noBtn.onclick = function () { reviewSizeEdit = null; renderReview(); };
+        noBtn.onclick = function () { reviewSizeEdit = null; rerender(); };
         wIn.addEventListener('keydown', function (ev) {
           if (ev.key === 'Enter') { ev.preventDefault(); lIn.focus(); }
         });
@@ -737,8 +763,7 @@
         row.appendChild(lIn);
         row.appendChild(okBtn);
         row.appendChild(noBtn);
-        rows.appendChild(row);
-        return;
+        return row;
       }
       var sz = document.createElement('div');
       sz.className = 'sz';
@@ -747,21 +772,26 @@
         /* The plain text the engine actually read shows on every
            flagged row, experimental mode or not (alex's call,
            2026-11-15) — it tells him what size and quantity the
-           scan tried to read, so he can fix the row himself. */
+           scan tried to read, so he can fix the row himself. A row
+           added by hand has no scan to quote — it just says so. */
         var note = '';
         if (e.scanFlag.reason === 'duplicate') note = 'already in the list';
         else if (e.scanFlag.reason === 'missing') note = 'not found on the page';
         else if (e.scanFlag.reason === 'guessed') note = 'quantity was a guess — check it';
         var raw = document.createElement('div');
         raw.className = 'flag-raw';
-        raw.textContent = 'Scanned as: ' + (e.scanFlag.raw || '(unreadable)') + (note ? ' \u2014 ' + note : '');
+        if (e.scanFlag.reason === 'added') {
+          raw.textContent = 'Added by hand \u2014 set the size and quantity';
+        } else {
+          raw.textContent = 'Scanned as: ' + (e.scanFlag.raw || '(unreadable)') + (note ? ' \u2014 ' + note : '');
+        }
         sz.appendChild(raw);
       } else {
         sz.textContent = M.displaySize(e.waist, e.length);
       }
       sz.onclick = function () {
         reviewSizeEdit = { pos: pos, waist: e.waist, length: e.length };
-        renderReview();
+        rerender();
       };
       var qty = document.createElement('input');
       qty.className = 'qty';
@@ -779,11 +809,11 @@
               // whether the reader missed the size, couldn't read its
               // quantity, or only guessed a zero.
               p.entries.splice(pos, 1);
-              persist(); renderReview();
+              persist(); rerender();
               return;
             }
             e.qty = v;
-            if (maybeClearScanFlag(e)) { persist(); renderReview(); }
+            if (maybeClearScanFlag(e)) { persist(); rerender(); }
             else { persist(); updateReviewTotal(); }
           }
         } else if (v > 0) {
@@ -817,7 +847,7 @@
               label: 'Delete', danger: true, onClick: function () {
                 p.entries.splice(pos, 1);
                 persist();
-                renderReview();
+                rerender();
               }
             },
             { label: 'Cancel' }
@@ -827,9 +857,7 @@
       row.appendChild(sz);
       row.appendChild(qty);
       row.appendChild(del);
-      rows.appendChild(row);
-    });
-    updateReviewTotal();
+      return row;
   }
 
   function updateReviewTotal() {
@@ -838,6 +866,124 @@
     var flagged = p.entries.filter(function (e) { return e.scanFlag; }).length;
     el('reviewTotal').textContent = 'Total: ' + total + ' pairs' +
       (flagged ? ' \u2014 ' + flagged + ' row' + (flagged === 1 ? '' : 's') + ' need attention' : '');
+  }
+
+  /* ------------------------------------------------- single-size review
+   * Experimental (text scan only): instead of the list, one size at a
+   * time — the row cropped straight out of the sheet photo above the
+   * same editor the list uses, so everything he needs to check is on
+   * his screen at once (no more squinting between the phone and the
+   * tiny numbers on the paper). Arrows step through the sizes; the
+   * bottom button is "Show as list" until the last size, where it
+   * becomes "Create project" (the same confirm flow as the list).
+   * The photos live only in memory (textPagePhotos) and are dropped
+   * when the review ends, so a crop is only available while the scan
+   * session is live. */
+  var sizeReviewIdx = 0;
+  var CROP_PAD = 14; // px of photo around the row's box
+
+  function showSizeReview() {
+    sizeReviewIdx = 0;
+    renderSizeReview();
+    show('sizereview');
+  }
+
+  function renderSizeReview() {
+    var p = activeProject();
+    if (!p) return showProjects();
+    el('sizeReviewTitle').textContent = 'Review sizes';
+    if (sizeReviewIdx >= p.entries.length) sizeReviewIdx = Math.max(0, p.entries.length - 1);
+    if (sizeReviewIdx < 0) sizeReviewIdx = 0;
+    var rowWrap = el('sizeReviewRow');
+    rowWrap.innerHTML = '';
+    var last = p.entries.length === 0 || sizeReviewIdx === p.entries.length - 1;
+    if (p.entries.length === 0) {
+      el('sizeCropCap').textContent = 'No sizes yet \u2014 tap Add size to start the list.';
+      el('sizePrev').disabled = true;
+      el('sizeNext').disabled = true;
+      el('sizeListBtn').textContent = 'Show as list';
+      updateSizeReviewTotal();
+      drawSizeCrop(null);
+      return;
+    }
+    var e = p.entries[sizeReviewIdx];
+    el('sizeCropCap').textContent = 'Size ' + (sizeReviewIdx + 1) + ' of ' + p.entries.length +
+      (e.scanCrop ? ' \u2014 page ' + (e.scanCrop.page + 1) : '');
+    rowWrap.appendChild(buildReviewRow(p, e, sizeReviewIdx, renderSizeReview));
+    el('sizePrev').disabled = sizeReviewIdx === 0;
+    el('sizeNext').disabled = last;
+    el('sizeListBtn').textContent = last ? 'Create project' : 'Show as list';
+    updateSizeReviewTotal();
+    drawSizeCrop(e);
+  }
+
+  /* The total line, in alex's words: "750 pairs \u2014 30 boxes". Red
+     while the total isn't divisible by the box size (the same warning
+     the list shows on arrival and at confirm). */
+  function updateSizeReviewTotal() {
+    var p = activeProject();
+    var total = p.entries.reduce(function (s, e) { return s + e.qty; }, 0);
+    var cap = (p.pairsPerBox > 0) ? p.pairsPerBox : M.BOX_CAPACITY;
+    var line = el('sizeReviewTotal');
+    if (total % cap === 0) {
+      line.textContent = 'Total: ' + total + ' pairs \u2014 ' + (total / cap) + ' boxes';
+      line.classList.remove('bad');
+    } else {
+      line.textContent = 'Total: ' + total + ' pairs \u2014 not divisible by ' + cap;
+      line.classList.add('bad');
+    }
+  }
+
+  /* Draw the row's crop out of its page photo. The box is in the
+     photo's pixels (see lookupSize); the <img> path decodes with the
+     same EXIF orientation the reader used, so the coordinates line up.
+     No crop data (a missing row, a hand-added row, a photo that is
+     gone) draws a plain placeholder instead of failing. */
+  function drawSizeCrop(e) {
+    var canvas = el('sizeCrop');
+    var ctx = canvas.getContext('2d');
+    function placeholder(msg) {
+      canvas.width = 600; canvas.height = 90;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#f5f5f5';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#757575';
+      ctx.font = '24px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(msg, canvas.width / 2, canvas.height / 2);
+    }
+    if (!e || !e.scanCrop || !e.scanCrop.box) {
+      placeholder(e ? 'No photo for this row' : 'No sizes yet');
+      return;
+    }
+    var crop = e.scanCrop;
+    getTextPageImage(crop.page, function (img) {
+      /* The row may have changed while the photo loaded — only draw
+         when this is still the current row. */
+      var cur = activeProject() && activeProject().entries[sizeReviewIdx];
+      if (!img || cur !== e) return;
+      var b = crop.box;
+      var x0 = Math.max(0, b.x0 - CROP_PAD), y0 = Math.max(0, b.y0 - CROP_PAD);
+      var x1 = Math.min(img.naturalWidth, b.x1 + CROP_PAD), y1 = Math.min(img.naturalHeight, b.y1 + CROP_PAD);
+      var w = Math.max(1, x1 - x0), h = Math.max(1, y1 - y0);
+      canvas.width = w;
+      canvas.height = h;
+      ctx.drawImage(img, x0, y0, w, h, 0, 0, w, h);
+    });
+  }
+
+  /* Add a blank size to the list, in size order once it has one, and
+     jump straight to it with the size editor open. */
+  function addSizeReviewRow() {
+    var p = activeProject();
+    if (!p) return;
+    var e = { waist: '', length: '', qty: 0, scanFlag: { raw: '', reason: 'added' } };
+    p.entries.push(e);
+    sizeReviewIdx = p.entries.length - 1;
+    reviewSizeEdit = { pos: sizeReviewIdx, waist: '', length: '' };
+    persist();
+    renderSizeReview();
   }
 
   function onConfirm() {
@@ -873,6 +1019,8 @@
             p.locked = true;
             p.lockedBoxCount = boxes;
             p.entryDraft = null;
+            /* The review is over — the kept scan photos go away. */
+            clearTextPhotos();
             // The counts as typed, frozen at lock time. Placing may later
             // change a size's qty (transfers); origQty is how the UI knows
             // to flag the changed number (green y).
@@ -1512,10 +1660,22 @@
    * time is 1:50pm", ticking every second, first pair starts the
    * clock); Reset placing moved into the placing Menu (same "are you
    * sure" popup); a Keep screen awake toggle in Advanced settings
-   * (Wake Lock API, placing screen only, off by default). */
+   * (Wake Lock API, placing screen only, off by default).
+   * v2.9.0: experimental single-size review after a text scan — one
+   * size at a time, the row cropped straight out of the sheet photo
+   * above the usual editor, arrows to step through, "Show as list"
+   * until the last size where it becomes "Create project", plus Add
+   * size (arranges itself by size) and the "750 pairs — 30 boxes"
+   * total, red when it isn't divisible. */
   var PADDLE_READ_SRC = 'js/paddleocr/paddleocr.min.js?v=web-v' + APP_VERSION;
   var textPages = []; // per-page OCR item lists, in page order
   var textQueuedFile = null; // second page picked with the first (gallery multi-pick)
+  /* The photos themselves, one per page, kept only in memory for the
+     single-size review's crop previews — never stored or uploaded, and
+     dropped when the review ends or a new scan starts. */
+  var textPagePhotos = []; // File/Blob per page, parallel to textPages
+  var textPageImages = {}; // page index -> loaded Image (crop source)
+  var textPageImageUrls = {}; // page index -> object URL, to revoke on clear
   var textReading = false;
   var paddleOcrPromise = null;
 
@@ -1599,15 +1759,19 @@
     el('textOverlay').classList.remove('open');
   }
 
-  /** Cancel the whole text scan (drops any pages already read, and any
-      queued second page). */
+  /** Cancel the whole text scan (drops any pages already read, any
+      queued second page, and the kept photos). */
   function cancelTextScan() {
     textPages = [];
     textQueuedFile = null;
+    clearTextPhotos();
     stopTextScanner();
   }
 
   function startTextScanner() {
+    /* A fresh scan (no pages read yet) drops any photos kept from an
+       earlier session — "Scan next page" keeps them, it has pages. */
+    if (textPages.length === 0) clearTextPhotos();
     textStatus(textPages.length === 0
       ? 'Tap Take photo to photograph page 1, or Scan from photo to pick one.'
       : 'Tap Take photo to photograph page ' + textPageNo() + ', or Scan from photo to pick one.');
@@ -1656,7 +1820,35 @@
       digits). */
   function readTextPhoto(file) {
     if (!file) return;
+    /* Keep the photo for the crop previews: textPages.length is the
+       0-based index of the page being read (a Retry pops textPages
+       first, so it overwrites the same slot). */
+    textPagePhotos[textPages.length] = file;
     runTextReadBlob(file);
+  }
+  /** Drop the kept photos (and their object URLs) — a new scan, a
+      cancelled scan, or the end of the review. */
+  function clearTextPhotos() {
+    Object.keys(textPageImageUrls).forEach(function (k) {
+      try { URL.revokeObjectURL(textPageImageUrls[k]); } catch (e) {}
+    });
+    textPagePhotos = [];
+    textPageImages = {};
+    textPageImageUrls = {};
+  }
+  /** The loaded Image for a page's photo, for crop drawing — cached,
+      so flipping between sizes is instant. Calls back with the Image,
+      or null when the photo is gone. */
+  function getTextPageImage(page, cb) {
+    if (textPageImages[page]) { cb(textPageImages[page]); return; }
+    var file = textPagePhotos[page];
+    if (!file) { cb(null); return; }
+    var img = new Image();
+    var url = URL.createObjectURL(file);
+    textPageImageUrls[page] = url;
+    img.onload = function () { textPageImages[page] = img; cb(img); };
+    img.onerror = function () { try { URL.revokeObjectURL(url); } catch (e) {} cb(null); };
+    img.src = url;
   }
 
   /** The shared read: a photo Blob goes to the engine, and the items
@@ -1728,7 +1920,7 @@
       showModal({
         title: 'Page 1 read',
         message: summary,
-        onDismiss: function () { textPages = []; textQueuedFile = null; },
+        onDismiss: function () { textPages = []; textQueuedFile = null; clearTextPhotos(); },
         buttons: [
           {
             label: 'Scan next page', primary: true,
@@ -1745,7 +1937,7 @@
           {
             label: 'Retry', onClick: function () { textPages.pop(); startTextScanner(); }
           },
-          { label: 'Cancel', onClick: function () { textPages = []; textQueuedFile = null; } }
+          { label: 'Cancel', onClick: function () { textPages = []; textQueuedFile = null; clearTextPhotos(); } }
         ]
       });
       return;
@@ -1766,7 +1958,7 @@
     showModal({
       title: 'Both pages read',
       message: bothMsg,
-      onDismiss: function () { textPages = []; },
+      onDismiss: function () { textPages = []; clearTextPhotos(); },
       buttons: [
         {
           label: 'Create project', primary: true,
@@ -1775,7 +1967,7 @@
         {
           label: 'Retry', onClick: function () { textPages.pop(); startTextScanner(); }
         },
-        { label: 'Cancel', onClick: function () { textPages = []; } }
+        { label: 'Cancel', onClick: function () { textPages = []; clearTextPhotos(); } }
       ]
     });
   }
@@ -1796,7 +1988,9 @@
     projects.push(p);
     ui.activeId = p.id;
     persist();
-    importScan(merged);
+    /* Experimental mode: the text scan lands on the single-size review
+       (crop preview, one size at a time) instead of the list. */
+    importScan(merged, { singleReview: settings.experimental });
     var total = p.entries.reduce(function (s, e) { return s + e.qty; }, 0);
     var cap = (p.pairsPerBox > 0) ? p.pairsPerBox : M.BOX_CAPACITY;
     /* The warning replaces this modal's content, so the button wrapper
@@ -1998,7 +2192,8 @@
      typing. Confirm refuses while any flagged row remains.
      Returns true when a modal was opened (the caller must not auto-close
      it) and false when it navigated straight to the review screen. */
-  function importScan(parsed) {
+  function importScan(parsed, opts) {
+    opts = opts || {};
     var p = activeProject();
     if (!p || p.locked) return false;
     var rows = parsed.rows || [];
@@ -2014,18 +2209,31 @@
     }
     function doImport() {
       p.entries = rows.map(function (r) {
+        /* Where the row was read (page + box in the photo's pixels)
+           rides on the entry as scanCrop, apart from scanFlag — so a
+           row keeps its crop preview even after he fixes it and the
+           flag clears. Rows with no box (missing, QR, manual) get none. */
+        var crop = (r.box && typeof r.page === 'number')
+          ? { box: r.box, page: r.page } : undefined;
         if (r.flag) {
           // A flagged row keeps its guessed quantity when it has one
           // (a 'guessed' row), so alex only has to check it; rows with
           // no quantity arrive at 0.
-          return { waist: r.waist || '', length: r.length || '', qty: (typeof r.qty === 'number' ? r.qty : 0), scanFlag: { raw: r.raw, reason: r.flag } };
+          var fe = { waist: r.waist || '', length: r.length || '', qty: (typeof r.qty === 'number' ? r.qty : 0), scanFlag: { raw: r.raw, reason: r.flag } };
+          if (crop) fe.scanCrop = crop;
+          return fe;
         }
-        return { waist: r.waist, length: r.length, qty: r.qty };
+        var e = { waist: r.waist, length: r.length, qty: r.qty };
+        if (crop) e.scanCrop = crop;
+        return e;
       });
       p.entryDraft = null;
       entry = null;
       persist();
-      showReview();
+      /* Text scans in experimental mode land on the single-size review
+         (one size at a time, crop preview); everything else lands on
+         the list as before. */
+      if (opts.singleReview) showSizeReview(); else showReview();
       if (bad > 0) {
         toast('Scanned ' + ok + ' sizes \u2014 ' + bad + ' row' + (bad === 1 ? '' : 's') + ' need attention');
       } else {
@@ -4673,6 +4881,24 @@
     // review
     el('reviewBack').onclick = goBackView;
     el('confirmBtn').onclick = onConfirm;
+    /* Single-size review (experimental text scan): Back goes to the
+       list; the arrows step through the sizes; the bottom button is
+       "Show as list" until the last size, where it creates the project. */
+    el('sizeReviewBack').onclick = showReview;
+    el('sizePrev').onclick = function () {
+      if (sizeReviewIdx > 0) { sizeReviewIdx--; renderSizeReview(); }
+    };
+    el('sizeNext').onclick = function () {
+      var p = activeProject();
+      if (p && sizeReviewIdx < p.entries.length - 1) { sizeReviewIdx++; renderSizeReview(); }
+    };
+    el('sizeAddBtn').onclick = addSizeReviewRow;
+    el('sizeListBtn').onclick = function () {
+      var p = activeProject();
+      if (!p) return;
+      if (sizeReviewIdx === p.entries.length - 1) onConfirm();
+      else showReview();
+    };
     // locked
     el('lockedBack').onclick = goBackView;
     el('printBtn').onclick = function () { window.print(); };

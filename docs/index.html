@@ -11,7 +11,7 @@
 <!-- ?v= cache-buster: bump every release so phones fetch fresh files -->
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-<link rel="stylesheet" href="css/style.css?v=web-v2.8.0">
+<link rel="stylesheet" href="css/style.css?v=web-v2.9.0">
 </head>
 <body>
 
@@ -70,6 +70,26 @@
   <div class="btn-row no-print">
     <button id="confirmBtn" class="primary">Confirm</button>
   </div>
+</section>
+
+<!-- Single-size review (experimental text scan) -->
+<section id="view-sizereview" class="view">
+  <div class="topbar no-print">
+    <button id="sizeReviewBack">&larr; Back</button>
+    <div class="title" id="sizeReviewTitle"></div>
+  </div>
+  <div class="crop-wrap no-print"><canvas id="sizeCrop"></canvas></div>
+  <div class="sub no-print" id="sizeCropCap"></div>
+  <div class="rows" id="sizeReviewRow"></div>
+  <div class="size-nav no-print">
+    <button id="sizePrev" aria-label="Previous size">&larr;</button>
+    <button id="sizeNext" aria-label="Next size">&rarr;</button>
+  </div>
+  <div class="btn-row no-print">
+    <button id="sizeAddBtn">+ Add size</button>
+    <button id="sizeListBtn" class="primary">Show as list</button>
+  </div>
+  <div class="total-line" id="sizeReviewTotal"></div>
 </section>
 
 <!-- Locked -->
@@ -437,8 +457,8 @@
   </div>
 </div>
 
-<script src="js/model.js?v=web-v2.8.0"></script>
-<script src="js/scan-parse.js?v=web-v2.8.0"></script>
-<script src="js/app.js?v=web-v2.8.0"></script>
+<script src="js/model.js?v=web-v2.9.0"></script>
+<script src="js/scan-parse.js?v=web-v2.9.0"></script>
+<script src="js/app.js?v=web-v2.9.0"></script>
 </body>
 </html>

@@ -203,6 +203,14 @@ button:disabled { opacity: 0.35; }
   min-height: 2.667rem; border: 0.111rem solid var(--border); border-radius: 0.444rem;
 }
 .total-line { font-weight: bold; font-size: 1.15rem; margin: 0.667rem 0.111rem; }
+.total-line.bad { color: var(--danger); }
+/* Single-size review (experimental text scan): the row cropped out of
+   the sheet photo, the step arrows, and the total line. */
+.crop-wrap { margin: 0.556rem 0 0.333rem; }
+.crop-wrap canvas { display: block; width: 100%; border: 0.111rem solid var(--border); border-radius: 0.444rem; background: #f5f5f5; }
+.size-nav { display: flex; gap: 0.556rem; margin: 0.556rem 0; }
+.size-nav button { flex: 1; min-height: 3rem; font-size: 1.4rem; }
+.size-nav button:disabled { opacity: 0.35; }
 .rate-line { font-weight: bold; font-size: 1.25rem; margin: 0.333rem 0.111rem 0.667rem; color: var(--primary); }
 /* Leaderboard: the most recent score stands out. */
 .trow.lb-new { background: #FFF3B0; }
