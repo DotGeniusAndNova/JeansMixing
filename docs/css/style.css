@@ -350,6 +350,10 @@ button:disabled { opacity: 0.35; }
 #setPairs:disabled { opacity: 0.5; }
 .toggle { min-width: 4.889rem; }
 .toggle.on { background: var(--brand); border-color: var(--brand); color: #fff; }
+/* Module detail: one row per file, and the reinstall progress bar. */
+.mod-file { padding: 0.444rem 0.111rem; border-bottom: 0.056rem solid #eee; }
+.progress { height: 0.556rem; background: var(--border); border-radius: 0.278rem; overflow: hidden; }
+.progress > div { height: 100%; background: var(--brand); width: 0%; transition: width 0.2s; }
 .num-input-sm {
   width: 5.111rem; font-size: 1.25rem; text-align: center;
   min-height: 2.889rem; border: 0.111rem solid var(--border); border-radius: 0.444rem;

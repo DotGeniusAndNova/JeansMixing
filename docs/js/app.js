@@ -15,7 +15,7 @@
   var M = window.JM;
   // Single source of truth for the displayed version (Projects title).
   // Bump this with every release, alongside the ?v= cache-busters.
-  var APP_VERSION = '2.10.2';
+  var APP_VERSION = '2.11.0';
 
   function el(id) { return document.getElementById(id); }
 
@@ -71,6 +71,12 @@
       // works everywhere). WebGPU is the default; if it doesn't work on
       // a phone the app falls back to WebAssembly on its own.
       scanEngine: 'webgpu',
+      // Scanner modules (Settings > Advanced settings > Modules):
+      // per-module tweaks. Tilt correction straightens tilted sheet
+      // photos before the text reader pairs sizes with quantities —
+      // on by default; turn it off in the PaddleOCR module to use the
+      // old flat reading.
+      modules: { paddleocr: { tiltCorrection: true } },
       // Keep the screen on while placing (Wake Lock API). Off by
       // default — a screen that never sleeps eats battery.
       keepAwake: false,
@@ -94,9 +100,14 @@
       padScale: (s.padScale > 0) ? Math.min(2, Math.max(0.5, s.padScale)) : d.padScale,
       experimental: s.experimental === true,
       scanEngine: s.scanEngine === 'wasm' ? 'wasm' : 'webgpu',
+      modules: { paddleocr: { tiltCorrection: true } },
       keepAwake: s.keepAwake === true,
       breaks: d.breaks
     };
+    /* A stored tilt-correction off stays off; anything else (missing,
+       or from before modules existed) is on. */
+    var modPaddle = (s.modules && s.modules.paddleocr) || {};
+    out.modules.paddleocr.tiltCorrection = modPaddle.tiltCorrection !== false;
     if (Array.isArray(s.breaks)) {
       out.breaks = s.breaks.filter(function (b) {
         return b && /^\d{1,2}:\d{2}$/.test(b.start || '') && /^\d{1,2}:\d{2}$/.test(b.end || '');
@@ -205,7 +216,7 @@
   applySettings();
 
   /* ------------------------------------------------------------ navigation */
-  var VIEWS = ['projects', 'entry', 'review', 'sizereview', 'locked', 'placing', 'box', 'stapling', 'settings', 'advanced', 'bundles',
+  var VIEWS = ['projects', 'entry', 'review', 'sizereview', 'locked', 'placing', 'box', 'stapling', 'settings', 'advanced', 'modules', 'module', 'bundles',
     'mixsizes', 'mixcapacity', 'mixboxes', 'mixplacing', 'mixbox', 'leaderboard'];
   // Where Back from Settings should return to ('projects' or 'entry').
   var settingsReturn = 'projects';
@@ -294,6 +305,8 @@
       case 'stapling': showPlacing(); return true;
       case 'settings': backFromSettings(); return true;
       case 'advanced': showSettings(); return true;
+      case 'modules': showAdvanced(); return true;
+      case 'module': showModules(); return true;
       case 'bundles': onBundlesDone(); return true;
       case 'mixsizes': showProjects(); return true;
       case 'mixcapacity': showMixSizes(); return true;
@@ -1949,6 +1962,24 @@
   function blurHint() {
     return ' This looks blurry — tap Retry for a clearer shot, holding steady and tapping the sheet to focus.';
   }
+  /** Tilt correction for the text reader (Settings > Advanced settings >
+      Modules > PaddleOCR): fit each page's row slope and aim the
+      quantity search along the tilted row. On by default. */
+  function tiltCorrectionOn() {
+    return !!(settings.modules && settings.modules.paddleocr &&
+      settings.modules.paddleocr.tiltCorrection !== false);
+  }
+  /** Sizes seen but quantities missing means the rows are sloped, not
+      blurry: the reader still finds the size text on a tilted photo,
+      it just can't pair the numbers. Ten or more such rows separates
+      a tilted page (dozens of sizes seen, none read) from a blurry
+      one (the reader barely sees any size text at all). */
+  function looksTilted(found, sizesSeen) {
+    return (sizesSeen - found) >= 10;
+  }
+  function tiltHint() {
+    return ' The rows look tilted — hold the phone straight above the sheet and tap Retry for a clearer shot.';
+  }
 
   /** One page came back from the engine: keep its items, then show what
       was read and offer the next step. Page 1 offers Retry / Scan next
@@ -1959,13 +1990,16 @@
     textPages.push(items);
     var pageNo = textPages.length;
     if (pageNo === 1) {
-      var s = ScanParse.summarizePage(items);
+      var s = ScanParse.summarizePage(items, { tilt: tiltCorrectionOn() });
       var shown = s.sizes.slice(0, 8);
       if (s.found > 8) shown.push('and ' + (s.found - 8) + ' more');
       var summary = 'Page 1 read: ' + s.found + ' sizes, ' + s.total + ' pairs' +
         (s.flagged ? ', ' + (s.flagged === 1 ? '1 row needs attention' : s.flagged + ' rows need attention') : '') +
-        (shown.length ? ' — ' + shown.join(', ') + '.' : '.');
-      if (looksBlurry(s.found, s.flagged)) summary += blurHint();
+        (shown.length ? ' — ' + shown.join(', ') + '.' : '.') +
+        /* How much the engine actually saw, so a 0 tells us at once
+           whether the engine saw nothing or the lookup lost the rows. */
+        ' Engine saw ' + items.length + ' text bits.';
+      if (looksBlurry(s.found, s.flagged)) summary += looksTilted(s.found, s.sizesSeen || 0) ? tiltHint() : blurHint();
       /* A second page picked with the first reads itself when page 1
          looks good — no extra tap. A blurry page 1 stops here instead,
          so he can Retry it; "Scan next page" then uses the queued
@@ -2002,7 +2036,7 @@
       });
       return;
     }
-    var merged = ScanParse.lookupPages(textPages);
+    var merged = ScanParse.lookupPages(textPages, { tilt: tiltCorrectionOn() });
     var rows = merged.rows;
     var ok = rows.filter(function (r) { return !r.flag; }).length;
     var bad = rows.length - ok;
@@ -2011,10 +2045,12 @@
       return M.displaySize(r.waist, r.length);
     });
     if (ok > 8) shown2.push('and ' + (ok - 8) + ' more');
+    var bits = textPages.reduce(function (n, pg) { return n + ((pg || []).length); }, 0);
     var bothMsg = 'Both pages read: ' + ok + ' sizes, ' + total + ' pairs' +
       (bad ? ', ' + (bad === 1 ? '1 row needs attention' : bad + ' rows need attention') : '') +
-      (shown2.length ? ' — ' + shown2.join(', ') + '.' : '.');
-    if (looksBlurry(ok, bad)) bothMsg += blurHint();
+      (shown2.length ? ' — ' + shown2.join(', ') + '.' : '.') +
+      ' Engine saw ' + bits + ' text bits.';
+    if (looksBlurry(ok, bad)) bothMsg += looksTilted(ok, merged.sizesSeen || 0) ? tiltHint() : blurHint();
     showModal({
       title: 'Both pages read',
       message: bothMsg,
@@ -2042,7 +2078,7 @@
      0 boxes. The single-size review is the default landing now, not
      an experimental one. */
   function createTextProject() {
-    var merged = ScanParse.lookupPages(textPages);
+    var merged = ScanParse.lookupPages(textPages, { tilt: tiltCorrectionOn() });
     textPages = [];
     var p = activeProject();
     if (!p || p.locked) return undefined;
@@ -3964,6 +4000,283 @@
     toast(engine === 'webgpu' ? 'Photo engine: WebGPU' : 'Photo engine: WebAssembly');
   }
 
+  /* ------------------------------------------------------------- modules
+   * Settings > Advanced settings > Modules: the scanner engines, each
+   * re-installable on its own. A reinstall re-downloads that module's
+   * files fresh from the server (bypassing every cache), checks each
+   * file arrived whole, and swaps it into the offline cache — so a
+   * half-downloaded or stale copy gets repaired without touching the
+   * rest of the app. The text reader's in-memory engine is dropped
+   * after its reinstall, so the next scan runs on the fresh files;
+   * the QR scripts are re-loaded the same way. */
+  var MODULES = [
+    {
+      id: 'paddleocr',
+      name: 'PaddleOCR',
+      short: 'Text reader',
+      desc: 'Reads the printed sheet photos into sizes and quantities. The reader itself, its two text models, and the number-crunching files it runs on.',
+      files: [
+        { path: 'js/paddleocr/paddleocr.min.js', label: 'Reader' },
+        { path: 'js/paddleocr/tiny_det.tar', label: 'Text detection model' },
+        { path: 'js/paddleocr/tiny_rec.tar', label: 'Text recognition model' },
+        { path: 'js/ort/ort-wasm-simd-threaded.jsep.mjs', label: 'Number-crunching (graphics chip)' },
+        { path: 'js/ort/ort-wasm-simd-threaded.jsep.wasm', label: 'Number-crunching data (graphics chip)' },
+        { path: 'js/ort/ort-wasm-simd-threaded.mjs', label: 'Number-crunching (CPU)' },
+        { path: 'js/ort/ort-wasm-simd-threaded.wasm', label: 'Number-crunching data (CPU)' }
+      ],
+      onInstalled: function () {
+        paddleOcrPromise = null; // the next scan builds a fresh engine
+        paddleBackendUsed = null;
+      }
+    },
+    {
+      id: 'qr',
+      name: 'QR code scanner',
+      short: 'QR reader + maker',
+      desc: 'Reads project QR codes from the camera, and makes the QR code when you share a project.',
+      files: [
+        { path: 'js/jsQR.min.js', label: 'QR reader' },
+        { path: 'js/qrcode.min.js', label: 'QR maker' }
+      ],
+      onInstalled: function () { reloadQrScripts(); }
+    }
+  ];
+  function moduleById(id) {
+    for (var i = 0; i < MODULES.length; i++) if (MODULES[i].id === id) return MODULES[i];
+    return null;
+  }
+  var currentModuleId = null;
+  /** One module's reinstall state, keyed by module id: the detail view
+      renders from it, so leaving mid-install and coming back still
+      shows live progress. */
+  var installStates = {};
+  function installState(mod) {
+    return installStates[mod.id] || (installStates[mod.id] = {
+      phase: 'idle', // idle | installing | done | error
+      fileIdx: 0, fileTotal: mod.files.length, fileLabel: '',
+      filePct: 0, message: ''
+    });
+  }
+  /** Put fresh bytes into the service worker's cache under the file's
+      normal address, and drop the cache-busting copy the download left
+      behind. No service worker cache (or none found) -> nothing to
+      swap; the file still loads from the network next time. */
+  function swapIntoCache(url, bustUrl, blob, type) {
+    if (typeof caches === 'undefined') return Promise.resolve(false);
+    return caches.keys().then(function (keys) {
+      var name = null;
+      keys.forEach(function (k) { if (k.indexOf('jeansmixing-') === 0) name = k; });
+      if (!name) return false;
+      return caches.open(name).then(function (c) {
+        var headers = {};
+        if (type) headers['Content-Type'] = type;
+        return c.put(url, new Response(blob, { headers: headers })).then(function () {
+          return c.delete(bustUrl).catch(function () {});
+        }).then(function () { return true; });
+      });
+    }).catch(function () { return false; });
+  }
+  /** Download one file fresh (bypassing every cache) with progress,
+      then swap it into the offline cache under its normal address.
+      The old copy is only replaced once the fresh one arrived whole,
+      so a failed download leaves the module working. The download
+      goes through a cache-busting address — the service worker would
+      otherwise serve the stale cached copy and call it fresh. */
+  function reinstallFile(file, onChunk) {
+    if (typeof fetch === 'undefined') return Promise.reject(new Error('fetch unavailable'));
+    var v = '?v=web-v' + APP_VERSION;
+    var url = appBaseUrl() + file.path + v;
+    var bust = url + '&reinstall=' + Date.now() + Math.floor(Math.random() * 1000);
+    return fetch(bust).then(function (resp) {
+      if (!resp.ok) throw new Error('download failed: ' + resp.status);
+      var total = parseInt(resp.headers.get('Content-Length') || '0', 10) || 0;
+      var type = resp.headers.get('Content-Type') || '';
+      if (!resp.body || !resp.body.getReader) {
+        return resp.blob().then(function (blob) {
+          onChunk(blob.size, total || blob.size);
+          return { blob: blob, total: total || blob.size, type: type };
+        });
+      }
+      var reader = resp.body.getReader();
+      var chunks = [], got = 0;
+      function pump() {
+        return reader.read().then(function (r) {
+          if (r.done) return { blob: new Blob(chunks), total: total || got, type: type };
+          chunks.push(r.value);
+          got += r.value.length;
+          onChunk(got, total);
+          return pump();
+        });
+      }
+      return pump();
+    }).then(function (got) {
+      if (got.total && got.blob.size !== got.total) throw new Error('download cut short');
+      return swapIntoCache(url, bust, got.blob, got.type).then(function () { return got.blob.size; });
+    });
+  }
+  /** Reinstall a whole module, file by file, reporting progress into
+      its install state (the detail view renders it live). A file that
+      fails stops the reinstall; files already swapped stay swapped,
+      files not yet started keep their old copies. */
+  function reinstallModule(mod) {
+    var st = installState(mod);
+    if (st.phase === 'installing') return Promise.resolve(false);
+    st.phase = 'installing'; st.fileIdx = 0; st.filePct = 0; st.message = 'Starting…';
+    renderModule();
+    var chain = Promise.resolve();
+    mod.files.forEach(function (file, i) {
+      chain = chain.then(function () {
+        st.fileIdx = i + 1; st.fileLabel = file.label; st.filePct = 0;
+        st.message = 'Downloading ' + file.label + ' (' + (i + 1) + ' of ' + mod.files.length + ')…';
+        renderModule();
+        return reinstallFile(file, function (got, total) {
+          st.filePct = total ? Math.min(100, Math.round(got / total * 100)) : 0;
+          st.message = 'Downloading ' + file.label + ' (' + (i + 1) + ' of ' + mod.files.length + ') — ' + st.filePct + '%';
+          renderModule();
+        });
+      });
+    });
+    return chain.then(function () {
+      try { if (mod.onInstalled) mod.onInstalled(); } catch (e) {}
+      st.phase = 'done'; st.filePct = 100;
+      st.message = 'Installed ✓ — ready to use. The next scan runs on the fresh files.';
+      renderModule();
+      return true;
+    }).catch(function (e) {
+      st.phase = 'error';
+      st.message = 'Couldn’t finish — ' + (st.fileLabel || 'a file') + ' didn’t download. Check you’re online and try again.';
+      renderModule();
+      return false;
+    });
+  }
+  /** Reload the QR scripts from the (just reinstalled) cached files, so
+      the fresh copies are the ones running — without dropping the old
+      globals first, so a failed reload leaves the working ones in
+      place. */
+  function reloadQrScripts() {
+    try {
+      delete scriptCache[QR_READ_SRC];
+      delete scriptCache[QR_GEN_SRC];
+      [QR_READ_SRC, QR_GEN_SRC].forEach(function (src) {
+        try {
+          var tags = document.querySelectorAll('script[src="' + src + '"]');
+          for (var i = 0; i < tags.length; i++) {
+            if (tags[i].parentNode) tags[i].parentNode.removeChild(tags[i]);
+          }
+        } catch (e) {}
+      });
+      loadScript(QR_READ_SRC);
+      loadScript(QR_GEN_SRC);
+    } catch (e) {}
+  }
+  /** The module list: one block per module — name, what it does, and
+      its live status (which engine the reader runs on, or whether a
+      reinstall finished). */
+  function moduleStatusLine(mod) {
+    var st = installState(mod);
+    if (st.phase === 'installing') return 'Installing… ' + (st.filePct || 0) + '%';
+    if (st.phase === 'done') return 'Reinstalled ✓';
+    if (st.phase === 'error') return 'Reinstall failed — tap to try again';
+    if (mod.id === 'paddleocr') {
+      return paddleBackendUsed
+        ? (paddleBackendUsed === 'webgpu' ? 'Running on WebGPU' : 'Running on WebAssembly')
+        : 'Not loaded yet — loads on the first scan';
+    }
+    return 'Ready';
+  }
+  function showModules() { renderModules(); show('modules'); }
+  function renderModules() {
+    var list = el('moduleList');
+    if (!list) return;
+    list.innerHTML = '';
+    MODULES.forEach(function (mod) {
+      var wrap = document.createElement('div');
+      wrap.className = 'btn-col';
+      var btn = document.createElement('button');
+      btn.textContent = mod.name;
+      btn.onclick = function () { showModule(mod.id); };
+      var sub = document.createElement('div');
+      sub.className = 'sub';
+      sub.style.marginTop = '0.25rem';
+      sub.textContent = mod.short + ' — ' + moduleStatusLine(mod);
+      wrap.appendChild(btn);
+      wrap.appendChild(sub);
+      list.appendChild(wrap);
+    });
+  }
+  function showModule(id) {
+    currentModuleId = id;
+    show('module');
+    renderModule();
+  }
+  /** The module detail: what it is, its files, its options, and the
+      Reinstall button with live progress. Re-renders from the install
+      state, so an install running in the background keeps showing. */
+  function renderModule() {
+    var mod = moduleById(currentModuleId);
+    if (!mod || currentView !== 'module') return;
+    el('moduleTitle').textContent = mod.name;
+    el('moduleDesc').textContent = mod.desc;
+    var filesEl = el('moduleFiles');
+    filesEl.innerHTML = '';
+    mod.files.forEach(function (f) {
+      var row = document.createElement('div');
+      row.className = 'mod-file';
+      var lab = document.createElement('div');
+      lab.className = 'set-label';
+      lab.textContent = f.label;
+      var path = document.createElement('div');
+      path.className = 'sub';
+      path.textContent = f.path;
+      row.appendChild(lab);
+      row.appendChild(path);
+      filesEl.appendChild(row);
+    });
+    var optsEl = el('moduleOptions');
+    optsEl.innerHTML = '';
+    if (mod.id === 'paddleocr') {
+      var row = document.createElement('div');
+      row.className = 'set-row';
+      var left = document.createElement('div');
+      var lab = document.createElement('div');
+      lab.className = 'set-label';
+      lab.textContent = 'Tilt correction';
+      var sub = document.createElement('div');
+      sub.className = 'sub';
+      sub.textContent = 'Straightens tilted sheet photos before reading them. Turn it off to use the old flat reading.';
+      left.appendChild(lab);
+      left.appendChild(sub);
+      var btn = document.createElement('button');
+      btn.className = 'toggle' + (tiltCorrectionOn() ? ' on' : '');
+      btn.textContent = tiltCorrectionOn() ? 'On' : 'Off';
+      btn.onclick = function () {
+        settings.modules.paddleocr.tiltCorrection = !tiltCorrectionOn();
+        saveSettings();
+        renderModule();
+        toast(tiltCorrectionOn() ? 'Tilt correction on' : 'Tilt correction off');
+      };
+      row.appendChild(left);
+      row.appendChild(btn);
+      optsEl.appendChild(row);
+    }
+    var st = installState(mod);
+    var btn = el('moduleReinstall');
+    btn.disabled = st.phase === 'installing';
+    btn.textContent = st.phase === 'installing' ? 'Installing…' : 'Reinstall';
+    var wrap = el('moduleProgressWrap');
+    if (st.phase === 'idle') {
+      wrap.style.display = 'none';
+    } else {
+      wrap.style.display = '';
+      el('moduleStatus').textContent = st.message;
+      var overall = st.fileTotal
+        ? Math.min(100, Math.round(((st.fileIdx - 1) + st.filePct / 100) / st.fileTotal * 100))
+        : st.filePct;
+      if (st.phase === 'done') overall = 100;
+      el('moduleProgressBar').style.width = overall + '%';
+    }
+  }
+
   function onResetProject() {
     showModal({
       title: 'Reset project?',
@@ -5243,6 +5556,13 @@
     el('advancedSettingsBtn').onclick = function () { showAdvanced(); };
     el('advancedBack').onclick = goBackView;
     el('scanEngineBtn').onclick = function () { showEngineChooser(); };
+    el('modulesBtn').onclick = function () { showModules(); };
+    el('modulesBack').onclick = goBackView;
+    el('moduleBack').onclick = goBackView;
+    el('moduleReinstall').onclick = function () {
+      var mod = moduleById(currentModuleId);
+      if (mod) reinstallModule(mod);
+    };
     el('installAppBtn').onclick = onInstallApp;
     el('shareProjectBtn').onclick = function () {
       var p = settingsCtx.project;

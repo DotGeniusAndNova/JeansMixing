@@ -11,7 +11,7 @@
 <!-- ?v= cache-buster: bump every release so phones fetch fresh files -->
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-<link rel="stylesheet" href="css/style.css?v=web-v2.10.2">
+<link rel="stylesheet" href="css/style.css?v=web-v2.11.0">
 </head>
 <body>
 
@@ -308,6 +308,38 @@
     </div>
     <button id="setExperimentalToggle" class="toggle">Off</button>
   </div>
+  <div class="btn-col no-print" style="margin-top:1.111rem">
+    <button id="modulesBtn">Modules</button>
+    <div class="sub" style="margin-top:0.25rem">Reinstall the text reader or the QR scanner, and tweak how they read.</div>
+  </div>
+</section>
+
+<!-- Modules -->
+<section id="view-modules" class="view">
+  <div class="topbar no-print">
+    <button id="modulesBack">&larr; Back</button>
+    <div class="title">Modules</div>
+  </div>
+  <div class="sub" style="margin-bottom:0.5rem">The scanner engines. Reinstall one if it starts acting up — only that module is re-downloaded, the rest of the app is untouched.</div>
+  <div id="moduleList"></div>
+</section>
+
+<!-- Module detail -->
+<section id="view-module" class="view">
+  <div class="topbar no-print">
+    <button id="moduleBack">&larr; Back</button>
+    <div class="title" id="moduleTitle">Module</div>
+  </div>
+  <div class="sub" id="moduleDesc" style="margin-bottom:0.5rem"></div>
+  <div id="moduleFiles"></div>
+  <div id="moduleOptions"></div>
+  <div class="btn-col no-print" style="margin-top:0.889rem">
+    <button id="moduleReinstall" class="primary">Reinstall</button>
+  </div>
+  <div id="moduleProgressWrap" style="display:none">
+    <div class="sub" id="moduleStatus" style="margin-bottom:0.25rem"></div>
+    <div class="progress"><div id="moduleProgressBar"></div></div>
+  </div>
 </section>
 
 <!-- Leaderboard -->
@@ -457,8 +489,8 @@
   </div>
 </div>
 
-<script src="js/model.js?v=web-v2.10.2"></script>
-<script src="js/scan-parse.js?v=web-v2.10.2"></script>
-<script src="js/app.js?v=web-v2.10.2"></script>
+<script src="js/model.js?v=web-v2.11.0"></script>
+<script src="js/scan-parse.js?v=web-v2.11.0"></script>
+<script src="js/app.js?v=web-v2.11.0"></script>
 </body>
 </html>
