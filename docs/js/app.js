@@ -15,7 +15,7 @@
   var M = window.JM;
   // Single source of truth for the displayed version (Projects title).
   // Bump this with every release, alongside the ?v= cache-busters.
-  var APP_VERSION = '2.11.0';
+  var APP_VERSION = '2.12.0';
 
   function el(id) { return document.getElementById(id); }
 
@@ -216,7 +216,7 @@
   applySettings();
 
   /* ------------------------------------------------------------ navigation */
-  var VIEWS = ['projects', 'entry', 'review', 'sizereview', 'locked', 'placing', 'box', 'stapling', 'settings', 'advanced', 'modules', 'module', 'bundles',
+  var VIEWS = ['projects', 'entry', 'review', 'sizereview', 'locked', 'placing', 'box', 'stapling', 'settings', 'advanced', 'modules', 'module', 'benchmark', 'bundles',
     'mixsizes', 'mixcapacity', 'mixboxes', 'mixplacing', 'mixbox', 'leaderboard'];
   // Where Back from Settings should return to ('projects' or 'entry').
   var settingsReturn = 'projects';
@@ -307,6 +307,7 @@
       case 'advanced': showSettings(); return true;
       case 'modules': showAdvanced(); return true;
       case 'module': showModules(); return true;
+      case 'benchmark': showAdvanced(); return true;
       case 'bundles': onBundlesDone(); return true;
       case 'mixsizes': showProjects(); return true;
       case 'mixcapacity': showMixSizes(); return true;
@@ -4277,6 +4278,245 @@
     }
   }
 
+  /* ------------------------------------------------------------ benchmark
+   * Settings > Advanced settings > Benchmark: time the text reader on
+   * this phone. alex picks the processor (WebGPU, WebAssembly, or
+   * both), picks a photo or uses the default test sheet, and the run
+   * reads it five times per processor — one lucky run can't flatter
+   * the number. The log lists every run plus the average, fastest
+   * and slowest, and stays saved so he can copy it and show Nova.
+   * The benchmark creates its OWN engine straight from
+   * createPaddleOcr — no fallback, so a WebGPU that can't start is
+   * reported as a failure instead of silently timing WebAssembly
+   * under WebGPU's name — and it never touches the scanner's cached
+   * engine, so the next real scan still uses his chosen processor. */
+  var BENCH_LOG_KEY = 'jm_benchmark_log_v1';
+  var BENCH_RUNS = 5;
+  /** The default test sheet, drawn in code so no photo is needed:
+      8 sizes, 351 pairs — the ground truth is known, so the log can
+      say the read was exact, not just fast. */
+  var BENCH_SHEET = [
+    ['28x30', 14], ['30x30', 22], ['32x30', 58], ['32x32', 94],
+    ['34x32', 43], ['36x30', 68], ['38x30', 27], ['40x32', 25]
+  ];
+  var benchBackend = null; // 'webgpu' | 'wasm' | 'both' — null = his current engine
+  var benchFile = null; // a picked photo Blob, or null for the default sheet
+  var benchFileName = '';
+  var benchRunning = false;
+  var benchState = null; // {phase, backend, run, total} — renders live progress
+  var benchLogText = '';
+  function benchBackendChoice() {
+    return benchBackend || (settings.scanEngine === 'wasm' ? 'wasm' : 'webgpu');
+  }
+  function benchSheetTotal() {
+    return BENCH_SHEET.reduce(function (s, r) { return s + r[1]; }, 0);
+  }
+  function benchNow() {
+    return (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+  }
+  function benchSecs(ms) { return (ms / 1000).toFixed(2) + 's'; }
+  function benchStats(times) {
+    var sum = 0, min = Infinity, max = -Infinity;
+    times.forEach(function (t) { sum += t; if (t < min) min = t; if (t > max) max = t; });
+    return { avg: sum / times.length, min: min, max: max };
+  }
+  /** Draw the default test sheet on a canvas and hand back its photo
+      as a Blob, the same shape the scanner feeds the engine. */
+  function makeBenchmarkSheetBlob() {
+    return new Promise(function (resolve, reject) {
+      try {
+        var c = document.createElement('canvas');
+        /* 800 wide so the quantities sit ~200px right of the sizes —
+           the lookup only pairs a number within 300px of its size. */
+        c.width = 800; c.height = 720;
+        var ctx = c.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, c.width, c.height);
+        ctx.fillStyle = '#000000';
+        ctx.font = 'bold 56px monospace';
+        ctx.textBaseline = 'middle';
+        BENCH_SHEET.forEach(function (row, i) {
+          var y = 80 + i * 80;
+          ctx.textAlign = 'left';
+          ctx.fillText(row[0], 60, y);
+          ctx.textAlign = 'right';
+          ctx.fillText(String(row[1]), 500, y);
+        });
+        if (!c.toBlob) return reject(new Error('this browser can’t make the test sheet'));
+        c.toBlob(function (b) {
+          b ? resolve(b) : reject(new Error('could not make the test sheet'));
+        }, 'image/png');
+      } catch (e) { reject(e); }
+    });
+  }
+  /** One processor, five reads: load the engine (timed, no fallback),
+      then read the photo five times (each timed). Returns the lines
+      for the log; a processor that won't start gets a failure line
+      instead of a silent detour. */
+  function benchRunBackend(backend, blob) {
+    var label = backend === 'webgpu' ? 'WebGPU' : 'WebAssembly';
+    benchState = { phase: 'loading', backend: label, run: 0, total: BENCH_RUNS };
+    renderBenchmark();
+    var t0 = benchNow();
+    return ensurePaddle().then(function (ok) {
+      if (!ok) throw new Error('could not load the text reader');
+      return createPaddleOcr(backend);
+    }).then(function (ocr) {
+      var loadMs = benchNow() - t0;
+      var lines = ['Engine: ' + label + ' — loaded in ' + benchSecs(loadMs)];
+      var times = [], i = 0;
+      function one() {
+        if (i >= BENCH_RUNS) {
+          var st = benchStats(times);
+          lines.push('  Average: ' + benchSecs(st.avg) +
+            ' (fastest ' + benchSecs(st.min) + ', slowest ' + benchSecs(st.max) + ')');
+          return lines;
+        }
+        i++;
+        benchState = { phase: 'reading', backend: label, run: i, total: BENCH_RUNS };
+        renderBenchmark();
+        var r0 = benchNow();
+        return ocr.predict(blob).then(function (res) {
+          var ms = benchNow() - r0;
+          times.push(ms);
+          var items = (res && res[0] && res[0].items) || [];
+          var s = ScanParse.summarizePage(items, { tilt: tiltCorrectionOn() });
+          lines.push('  Run ' + i + ': ' + benchSecs(ms) + ' — ' +
+            s.found + ' sizes, ' + s.total + ' pairs, ' + items.length + ' text bits');
+          return one();
+        });
+      }
+      return one();
+    }).catch(function (e) {
+      return ['Engine: ' + label + ' — couldn’t start' +
+        (e && e.message ? ' (' + e.message + ')' : '') + '.'];
+    });
+  }
+  /** The whole benchmark: the chosen processor(s), five reads each,
+      then the log — saved, shown, and copyable. */
+  function runBenchmark() {
+    if (benchRunning) return Promise.resolve(false);
+    benchRunning = true;
+    benchState = { phase: 'starting', backend: '', run: 0, total: BENCH_RUNS };
+    benchLogText = '';
+    renderBenchmark();
+    var backends = benchBackendChoice() === 'both' ? ['webgpu', 'wasm'] : [benchBackendChoice()];
+    var fileLabel = benchFile
+      ? benchFileName + ' (your photo)'
+      : 'Default test sheet (' + BENCH_SHEET.length + ' sizes, ' + benchSheetTotal() + ' pairs)';
+    var blobP = benchFile ? Promise.resolve(benchFile) : makeBenchmarkSheetBlob();
+    return blobP.then(function (blob) {
+      var lines = [];
+      lines.push('JeansMixing benchmark — ' + new Date().toLocaleString());
+      lines.push('App v' + APP_VERSION);
+      lines.push('File: ' + fileLabel);
+      var chain = Promise.resolve();
+      backends.forEach(function (b) {
+        chain = chain.then(function () {
+          return benchRunBackend(b, blob).then(function (bl) { lines = lines.concat(bl); });
+        });
+      });
+      return chain.then(function () {
+        benchLogText = lines.join('\n');
+        try { localStorage.setItem(BENCH_LOG_KEY, benchLogText); } catch (e) {}
+        benchRunning = false;
+        benchState = { phase: 'done', backend: '', run: 0, total: BENCH_RUNS };
+        renderBenchmark();
+        toast('Benchmark done — log saved, tap Copy log to share it');
+        return true;
+      });
+    }).catch(function (e) {
+      benchRunning = false;
+      benchState = { phase: 'error', backend: '', run: 0, total: BENCH_RUNS };
+      benchLogText = 'JeansMixing benchmark — ' + new Date().toLocaleString() + '\n' +
+        'App v' + APP_VERSION + '\nFile: ' + fileLabel + '\n' +
+        'Couldn’t run — ' + (e && e.message ? e.message : 'something went wrong') + '.';
+      try { localStorage.setItem(BENCH_LOG_KEY, benchLogText); } catch (e2) {}
+      renderBenchmark();
+      return false;
+    });
+  }
+  /** Copy the log to the clipboard, with the old select-and-copy
+      fallback for browsers without the clipboard API. */
+  function copyBenchLog() {
+    var text = benchLogText || '';
+    if (!text) { toast('Nothing to copy yet — run the benchmark first'); return; }
+    function done() { toast('Log copied — paste it to Nova'); }
+    function fallbackCopy() {
+      try {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        done();
+      } catch (e2) { toast('Copy didn’t work — long-press the log to select it'); }
+    }
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done, function () { fallbackCopy(); });
+      } else {
+        fallbackCopy();
+      }
+    } catch (e) { fallbackCopy(); }
+  }
+  function showBenchmark() { show('benchmark'); renderBenchmark(); }
+  /** The benchmark screen, rendered from its live state — the chosen
+      processor, the test photo, the run in progress, the results,
+      and the saved log from the last run (it survives closing the
+      app, so he can copy it later). */
+  function renderBenchmark() {
+    if (currentView !== 'benchmark') return;
+    var choice = benchBackendChoice();
+    [['benchWebgpuBtn', 'webgpu'], ['benchWasmBtn', 'wasm'], ['benchBothBtn', 'both']].forEach(function (pair) {
+      var b = el(pair[0]);
+      if (!b) return;
+      b.className = 'toggle' + (choice === pair[1] ? ' on' : '');
+    });
+    el('benchFileSub').textContent = benchFile
+      ? benchFileName + ' — tap Choose a photo to pick a different one.'
+      : 'Default test sheet — ' + BENCH_SHEET.length + ' sizes, ' + benchSheetTotal() + ' pairs.';
+    el('benchDefaultWrap').style.display = benchFile ? '' : 'none';
+    var runBtn = el('benchRunBtn');
+    runBtn.disabled = benchRunning;
+    runBtn.textContent = benchRunning ? 'Running…' : 'Run benchmark';
+    var status = '';
+    if (benchState) {
+      if (benchState.phase === 'loading') status = 'Loading the ' + benchState.backend + ' engine…';
+      else if (benchState.phase === 'reading') status = 'Reading with ' + benchState.backend + ' — run ' + benchState.run + ' of ' + benchState.total + '…';
+      else if (benchState.phase === 'starting') status = 'Getting the test photo ready…';
+      else if (benchState.phase === 'done') status = 'Done — the log below has every run.';
+      else if (benchState.phase === 'error') status = 'Couldn’t finish — the log below says what happened.';
+    }
+    el('benchStatus').textContent = status;
+    if (!benchLogText) {
+      try { benchLogText = localStorage.getItem(BENCH_LOG_KEY) || ''; } catch (e) { benchLogText = ''; }
+    }
+    // The results block mirrors the log's per-engine lines, minus the
+    // three-line header (title, app version, file).
+    var resEl = el('benchResults');
+    resEl.innerHTML = '';
+    if (benchLogText) {
+      benchLogText.split('\n').slice(3).forEach(function (line) {
+        if (!line) return;
+        var d = document.createElement('div');
+        d.className = line.indexOf('Engine:') === 0 ? 'set-label' : 'sub';
+        if (line.indexOf('Engine:') === 0) d.style.marginTop = '0.5rem';
+        d.textContent = line.replace(/^  /, '');
+        resEl.appendChild(d);
+      });
+    }
+    var wrap = el('benchLogWrap');
+    if (benchLogText) {
+      wrap.style.display = '';
+      el('benchLog').textContent = benchLogText;
+    } else {
+      wrap.style.display = 'none';
+    }
+  }
+
   function onResetProject() {
     showModal({
       title: 'Reset project?',
@@ -5557,6 +5797,20 @@
     el('advancedBack').onclick = goBackView;
     el('scanEngineBtn').onclick = function () { showEngineChooser(); };
     el('modulesBtn').onclick = function () { showModules(); };
+    el('benchmarkBtn').onclick = function () { showBenchmark(); };
+    el('benchmarkBack').onclick = goBackView;
+    el('benchWebgpuBtn').onclick = function () { benchBackend = 'webgpu'; renderBenchmark(); };
+    el('benchWasmBtn').onclick = function () { benchBackend = 'wasm'; renderBenchmark(); };
+    el('benchBothBtn').onclick = function () { benchBackend = 'both'; renderBenchmark(); };
+    el('benchFileBtn').onclick = function () { el('benchFileInput').click(); };
+    el('benchFileInput').onchange = function (ev) {
+      var f = ev.target.files && ev.target.files[0];
+      if (f) { benchFile = f; benchFileName = f.name || 'Picked photo'; renderBenchmark(); }
+      ev.target.value = '';
+    };
+    el('benchDefaultBtn').onclick = function () { benchFile = null; benchFileName = ''; renderBenchmark(); };
+    el('benchRunBtn').onclick = function () { runBenchmark(); };
+    el('benchCopyBtn').onclick = function () { copyBenchLog(); };
     el('modulesBack').onclick = goBackView;
     el('moduleBack').onclick = goBackView;
     el('moduleReinstall').onclick = function () {

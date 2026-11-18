@@ -11,7 +11,7 @@
 <!-- ?v= cache-buster: bump every release so phones fetch fresh files -->
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-<link rel="stylesheet" href="css/style.css?v=web-v2.11.0">
+<link rel="stylesheet" href="css/style.css?v=web-v2.12.0">
 </head>
 <body>
 
@@ -312,6 +312,53 @@
     <button id="modulesBtn">Modules</button>
     <div class="sub" style="margin-top:0.25rem">Reinstall the text reader or the QR scanner, and tweak how they read.</div>
   </div>
+  <div class="btn-col no-print" style="margin-top:1.111rem">
+    <button id="benchmarkBtn">Benchmark</button>
+    <div class="sub" style="margin-top:0.25rem">Time the text reader on this phone — WebGPU vs WebAssembly, five runs each.</div>
+  </div>
+</section>
+
+<!-- Benchmark -->
+<section id="view-benchmark" class="view">
+  <div class="topbar no-print">
+    <button id="benchmarkBack">&larr; Back</button>
+    <div class="title">Benchmark</div>
+  </div>
+  <div class="sub" style="margin-bottom:0.5rem">Times the text reader on this phone, five runs each, so one lucky run can&rsquo;t flatter it. Pick the processor, pick a photo or use the default test sheet, and hit Run.</div>
+  <div class="set-row">
+    <div>
+      <div class="set-label">Processor</div>
+      <div class="sub">Which engine to time. Both runs each one five times.</div>
+    </div>
+  </div>
+  <div class="btn-row no-print">
+    <button id="benchWebgpuBtn" class="toggle">WebGPU</button>
+    <button id="benchWasmBtn" class="toggle">WebAssembly</button>
+    <button id="benchBothBtn" class="toggle">Both</button>
+  </div>
+  <div class="set-row">
+    <div>
+      <div class="set-label">Test photo</div>
+      <div class="sub" id="benchFileSub">Default test sheet — 8 sizes, 351 pairs.</div>
+    </div>
+    <button id="benchFileBtn">Choose a photo&hellip;</button>
+  </div>
+  <div class="btn-row no-print" id="benchDefaultWrap" style="display:none">
+    <button id="benchDefaultBtn">Use the default test sheet</button>
+  </div>
+  <input type="file" id="benchFileInput" accept="image/*" style="display:none">
+  <div class="btn-col no-print" style="margin-top:0.889rem">
+    <button id="benchRunBtn" class="primary">Run benchmark</button>
+  </div>
+  <div class="sub" id="benchStatus" style="margin-top:0.5rem"></div>
+  <div id="benchResults" style="margin-top:0.5rem"></div>
+  <div id="benchLogWrap" style="display:none; margin-top:0.889rem">
+    <div class="set-label" style="margin-bottom:0.25rem">Log</div>
+    <pre class="bench-log" id="benchLog"></pre>
+    <div class="btn-col no-print" style="margin-top:0.5rem">
+      <button id="benchCopyBtn">Copy log</button>
+    </div>
+  </div>
 </section>
 
 <!-- Modules -->
@@ -489,8 +536,8 @@
   </div>
 </div>
 
-<script src="js/model.js?v=web-v2.11.0"></script>
-<script src="js/scan-parse.js?v=web-v2.11.0"></script>
-<script src="js/app.js?v=web-v2.11.0"></script>
+<script src="js/model.js?v=web-v2.12.0"></script>
+<script src="js/scan-parse.js?v=web-v2.12.0"></script>
+<script src="js/app.js?v=web-v2.12.0"></script>
 </body>
 </html>

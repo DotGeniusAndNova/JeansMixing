@@ -354,6 +354,7 @@ button:disabled { opacity: 0.35; }
 .mod-file { padding: 0.444rem 0.111rem; border-bottom: 0.056rem solid #eee; }
 .progress { height: 0.556rem; background: var(--border); border-radius: 0.278rem; overflow: hidden; }
 .progress > div { height: 100%; background: var(--brand); width: 0%; transition: width 0.2s; }
+.bench-log { font-family: monospace; font-size: 0.778rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word; background: var(--card); border: 0.056rem solid var(--border); border-radius: 0.278rem; padding: 0.556rem; margin: 0; max-height: 16rem; overflow-y: auto; }
 .num-input-sm {
   width: 5.111rem; font-size: 1.25rem; text-align: center;
   min-height: 2.889rem; border: 0.111rem solid var(--border); border-radius: 0.444rem;

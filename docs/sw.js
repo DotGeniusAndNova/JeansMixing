@@ -3,20 +3,20 @@
  * BUMP WITH EVERY RELEASE: the CACHE name and the ?v= on the versioned
  * assets below must match the current release (see index.html).
  */
-var CACHE = 'jeansmixing-v2-11-0';
+var CACHE = 'jeansmixing-v2-12-0';
 var ASSETS = [
   './',
   './index.html',
-  './css/style.css?v=web-v2.11.0',
-  './js/model.js?v=web-v2.11.0',
-  './js/scan-parse.js?v=web-v2.11.0',
-  './js/app.js?v=web-v2.11.0',
-  './js/jsQR.min.js?v=web-v2.11.0',
-  './js/qrcode.min.js?v=web-v2.11.0',
-  './js/paddleocr/paddleocr.min.js?v=web-v2.11.0',
-  './js/paddleocr/tiny_det.tar?v=web-v2.11.0',
-  './js/paddleocr/tiny_rec.tar?v=web-v2.11.0',
-  './assets/share-qr.png?v=web-v2.11.0',
+  './css/style.css?v=web-v2.12.0',
+  './js/model.js?v=web-v2.12.0',
+  './js/scan-parse.js?v=web-v2.12.0',
+  './js/app.js?v=web-v2.12.0',
+  './js/jsQR.min.js?v=web-v2.12.0',
+  './js/qrcode.min.js?v=web-v2.12.0',
+  './js/paddleocr/paddleocr.min.js?v=web-v2.12.0',
+  './js/paddleocr/tiny_det.tar?v=web-v2.12.0',
+  './js/paddleocr/tiny_rec.tar?v=web-v2.12.0',
+  './assets/share-qr.png?v=web-v2.12.0',
   './manifest.webmanifest',
   './icons/icon-192.png',
   './icons/icon-512.png',
