@@ -15,7 +15,7 @@
   var M = window.JM;
   // Single source of truth for the displayed version (Projects title).
   // Bump this with every release, alongside the ?v= cache-busters.
-  var APP_VERSION = '2.12.0';
+  var APP_VERSION = '2.12.1';
 
   function el(id) { return document.getElementById(id); }
 
@@ -4090,7 +4090,17 @@
     var bust = url + '&reinstall=' + Date.now() + Math.floor(Math.random() * 1000);
     return fetch(bust).then(function (resp) {
       if (!resp.ok) throw new Error('download failed: ' + resp.status);
-      var total = parseInt(resp.headers.get('Content-Length') || '0', 10) || 0;
+      /* GitHub Pages compresses every file in transit (Content-Encoding:
+         gzip), so the Content-Length is the COMPRESSED size while the
+         blob the browser hands back is the DECOMPRESSED size — the two
+         can never match, and comparing them failed every reinstall on
+         live at the very first file (it worked on localhost only
+         because that server doesn't compress). When the response is
+         encoded the size is unknowable from the headers, so the total
+         is 0 and stream completion is the integrity signal instead: a
+         cut-short download throws while reading. */
+      var encoded = !!resp.headers.get('Content-Encoding');
+      var total = encoded ? 0 : (parseInt(resp.headers.get('Content-Length') || '0', 10) || 0);
       var type = resp.headers.get('Content-Type') || '';
       if (!resp.body || !resp.body.getReader) {
         return resp.blob().then(function (blob) {
@@ -4132,7 +4142,10 @@
         renderModule();
         return reinstallFile(file, function (got, total) {
           st.filePct = total ? Math.min(100, Math.round(got / total * 100)) : 0;
-          st.message = 'Downloading ' + file.label + ' (' + (i + 1) + ' of ' + mod.files.length + ') — ' + st.filePct + '%';
+          /* No total when the host compresses the file (see
+             reinstallFile) — show the file count without a fake %. */
+          st.message = 'Downloading ' + file.label + ' (' + (i + 1) + ' of ' + mod.files.length + ')' +
+            (total ? ' — ' + st.filePct + '%' : '…');
           renderModule();
         });
       });
