@@ -15,7 +15,7 @@
   var M = window.JM;
   // Single source of truth for the displayed version (Projects title).
   // Bump this with every release, alongside the ?v= cache-busters.
-  var APP_VERSION = '2.12.1';
+  var APP_VERSION = '2.13.0';
 
   function el(id) { return document.getElementById(id); }
 
@@ -1934,17 +1934,48 @@
     textReading = true;
     textStatus('Reading page ' + textPageNo() + '… this takes a few seconds.');
     setTextButtonsDisabled(true);
+    /* The page-2 wait popup (when it's the live surface) shows the
+       same reading state the overlay would. */
+    setTextWaitReading(textPageNo());
     ensurePaddleOcr().then(function (ocr) {
       return ocr.predict(blob);
     }).then(function (res) {
-      textReading = false;
       var items = (res && res[0] && res[0].items) || [];
+      /* WebGPU ran but saw nothing at all — on some phones its
+         detection comes back blind for a whole photo while
+         WebAssembly reads the same photo fine (alex's S24: WebGPU 0
+         items 5/5 on the Reg 750 page 1, WASM 19 sizes on the same
+         file). Read the same photo once on WebAssembly before
+         calling it blurry. Only when WebGPU was the engine and the
+         user chose it — a chosen WASM returning nothing means the
+         photo really has no text. */
+      if (items.length === 0 && paddleBackendUsed === 'webgpu' && settings.scanEngine !== 'wasm') {
+        textStatus('WebGPU saw nothing — reading again on WebAssembly…');
+        if (textWaitOpen) showTextWait(textPageNo(), 'WebGPU saw nothing — reading again on WebAssembly…');
+        return createPaddleOcr('wasm').then(function (wasmOcr) {
+          return wasmOcr.predict(blob);
+        }).then(function (res2) {
+          var items2 = (res2 && res2[0] && res2[0].items) || [];
+          textRetryNote = items2.length > 0 ? 'wasm' : 'both-0';
+          return items2;
+        }).catch(function () { return items; });
+      }
+      return items;
+    }).then(function (items) {
+      textReading = false;
       stopTextScanner();
       handleTextPage(items);
     }).catch(function (e) {
       textReading = false;
+      textRetryNote = '';
       setTextButtonsDisabled(false);
-      if (e && e.message === 'paddle load failed') {
+      if (textPages.length >= 1) {
+        /* The read was for page 2 (page 1 is already in): the page-1
+           popup is gone and the overlay may be closed too, so a
+           status line would be invisible — say it in a popup with a
+           Retry instead of going silent. */
+        showTextPageError(textPageNo(), e);
+      } else if (e && e.message === 'paddle load failed') {
         textStatus('Couldn’t load the text reader — reload the app and try again.');
       } else {
         textStatus('Couldn’t read that photo — try a clearer shot.');
@@ -1982,12 +2013,76 @@
     return ' The rows look tilted — hold the phone straight above the sheet and tap Retry for a clearer shot.';
   }
 
+  /** The page-2 wait popup: after "Scan next page" the popup stays up
+      saying "Scanning page 2…" instead of disappearing — through the
+      photo pick and the read — then the result popup replaces it. A
+      failed read replaces it with an error popup, never silence. */
+  var textWaitOpen = false;
+  var textRetryNote = ''; // 'wasm' | 'both-0' — set when a read retried on WASM, read by the next summary
+  function textWaitCancelBtn() {
+    return { label: 'Cancel', onClick: function () { textWaitOpen = false; textPages = []; textQueuedFile = null; clearTextPhotos(); } };
+  }
+  function textWaitTakePhotoBtn() {
+    return { label: 'Take photo', primary: true, onClick: function () { openTextCamera(); } };
+  }
+  function showTextWait(pageNo, message, buttons) {
+    textWaitOpen = true;
+    showModal({
+      title: 'Scanning page ' + pageNo + '…',
+      message: message,
+      onDismiss: function () { textWaitOpen = false; textPages = []; textQueuedFile = null; clearTextPhotos(); },
+      buttons: buttons || [textWaitCancelBtn()]
+    });
+  }
+  function setTextWaitReading(pageNo) {
+    if (!textWaitOpen) return;
+    showTextWait(pageNo, 'Reading page ' + pageNo + '… this takes a few seconds.');
+  }
+  /** The retry note for the summary after a read: what happened, in
+      one line, then cleared so the next read starts fresh. */
+  function textRetrySuffix() {
+    var n = textRetryNote;
+    textRetryNote = '';
+    if (n === 'wasm') return ' WebGPU saw nothing on this photo, so it read again on WebAssembly.';
+    if (n === 'both-0') return ' Both processors saw nothing on this photo.';
+    return '';
+  }
+  /** A page-2 read failed: say so in a popup with a Retry (the same
+      photo is still kept), instead of a status line nobody sees. */
+  function showTextPageError(pageNo, e) {
+    textWaitOpen = false;
+    var detail = (e && e.message === 'paddle load failed')
+      ? 'The text reader couldn’t load — reload the app and try again.'
+      : 'The reader hit an error' + (e && e.message ? ' — ' + e.message : '') + '.';
+    showModal({
+      title: 'Couldn’t read page ' + pageNo,
+      message: detail + ' Your first page is still saved — tap Retry to read this page again.',
+      onDismiss: function () { textPages = []; textQueuedFile = null; clearTextPhotos(); },
+      buttons: [
+        {
+          label: 'Retry', primary: true,
+          onClick: function () {
+            var file = textPagePhotos[textPages.length];
+            if (!file) { startTextScanner(); return; }
+            showTextWait(pageNo, 'Reading page ' + pageNo + '… this takes a few seconds.');
+            runTextReadBlob(file);
+            return false;
+          }
+        },
+        { label: 'Cancel', onClick: function () { textPages = []; textQueuedFile = null; clearTextPhotos(); } }
+      ]
+    });
+  }
+
   /** One page came back from the engine: keep its items, then show what
       was read and offer the next step. Page 1 offers Retry / Scan next
       page; page 2 offers Retry / Create project. The page-1 summary
       counts only this page (sizes on the next page aren't "missing"
       yet); the page-2 summary is the merged result over both pages. */
   function handleTextPage(items) {
+    /* The read landed — the wait popup (if it was up) is done; the
+       summary popup below replaces it. */
+    textWaitOpen = false;
     textPages.push(items);
     var pageNo = textPages.length;
     if (pageNo === 1) {
@@ -1999,7 +2094,7 @@
         (shown.length ? ' — ' + shown.join(', ') + '.' : '.') +
         /* How much the engine actually saw, so a 0 tells us at once
            whether the engine saw nothing or the lookup lost the rows. */
-        ' Engine saw ' + items.length + ' text bits.';
+        ' Engine saw ' + items.length + ' text bits.' + textRetrySuffix();
       if (looksBlurry(s.found, s.flagged)) summary += looksTilted(s.found, s.sizesSeen || 0) ? tiltHint() : blurHint();
       /* A second page picked with the first reads itself when page 1
          looks good — no extra tap. A blurry page 1 stops here instead,
@@ -2009,6 +2104,9 @@
       if (textQueuedFile && !looksBlurry(s.found, s.flagged)) {
         var next = textQueuedFile;
         textQueuedFile = null;
+        /* The overlay is closed by now, so the second read would run
+           with no surface at all — keep the wait popup up for it. */
+        showTextWait(2, 'Reading page 2… this takes a few seconds.');
         readTextPhoto(next);
         return;
       }
@@ -2023,10 +2121,20 @@
               if (textQueuedFile) {
                 var next = textQueuedFile;
                 textQueuedFile = null;
+                showTextWait(2, 'Reading page 2… this takes a few seconds.');
                 readTextPhoto(next);
               } else {
-                startTextScanner();
+                /* The popup stays up saying "Scanning page 2…" while
+                   the camera opens and the photo reads — it used to
+                   disappear here, and a failed page-2 read left
+                   nothing at all. The camera opens on this same tap,
+                   so it's one less tap; backing out of the camera
+                   leaves the popup with a Take photo button. */
+                showTextWait(2, 'Tap Take photo to photograph page 2.',
+                  [textWaitTakePhotoBtn(), textWaitCancelBtn()]);
+                openTextCamera();
               }
+              return false;
             }
           },
           {
@@ -2050,7 +2158,7 @@
     var bothMsg = 'Both pages read: ' + ok + ' sizes, ' + total + ' pairs' +
       (bad ? ', ' + (bad === 1 ? '1 row needs attention' : bad + ' rows need attention') : '') +
       (shown2.length ? ' — ' + shown2.join(', ') + '.' : '.') +
-      ' Engine saw ' + bits + ' text bits.';
+      ' Engine saw ' + bits + ' text bits.' + textRetrySuffix();
     if (looksBlurry(ok, bad)) bothMsg += looksTilted(ok, merged.sizesSeen || 0) ? tiltHint() : blurHint();
     showModal({
       title: 'Both pages read',
@@ -4366,6 +4474,61 @@
       then read the photo five times (each timed). Returns the lines
       for the log; a processor that won't start gets a failure line
       instead of a silent detour. */
+  /** Error codes for the benchmark log, so a pasted log says exactly
+      what happened without a follow-up question: E-LOAD the engine
+      couldn't start, E-READ a read threw, E-NO-TEXT the engine
+      returned no text at all, E-NO-MATCH it saw text but no sizes. */
+  function benchDetailLines(items) {
+    /* What the reader saw on run 1, and what the lookup made of it —
+       the raw text bits (with positions, so a tilted row shows up),
+       then the sizes it matched and the rows it flagged, with why.
+       Only run 1 gets the detail; runs 2–5 are for timing. */
+    var lines = [];
+    var s = ScanParse.summarizePage(items, { tilt: tiltCorrectionOn() });
+    var merged = ScanParse.lookupPages([items], { tilt: tiltCorrectionOn() });
+    var flagged = merged.rows.filter(function (r) { return r.flag === 'unreadable' || r.flag === 'guessed'; });
+    lines.push('  Read as: ' + s.found + ' sizes, ' + s.total + ' pairs; sizes seen: ' + s.sizesSeen + '; rows needing attention: ' + flagged.length);
+    flagged.forEach(function (r) {
+      var label = M.displaySize(r.waist, r.length);
+      if (r.flag === 'unreadable') lines.push('    ' + label + ' — unreadable (size seen, no number beside it)');
+      else lines.push('    ' + label + ' — guessed (read as \'' + r.raw + '\' — check it)');
+    });
+    lines.push('  What the reader saw (' + items.length + ' text bits):');
+    if (!items.length) {
+      lines.push('    (no text at all — the engine returned an empty list)');
+      return lines;
+    }
+    var shown = items.slice(0, 150);
+    shown.forEach(function (it) {
+      var pos = '';
+      var p = it.poly || [];
+      if (p.length) {
+        var xs = p.map(function (pt) { return pt[0]; });
+        var ys = p.map(function (pt) { return pt[1]; });
+        pos = ' (' + Math.round(Math.min.apply(null, xs)) + ',' + Math.round(Math.min.apply(null, ys)) + ')';
+      }
+      lines.push('    \'' + it.text + '\'' + pos);
+    });
+    if (items.length > shown.length) lines.push('    …and ' + (items.length - shown.length) + ' more text bits');
+    return lines;
+  }
+  function benchPhotoSize(blob) {
+    /* The photo's pixel size, for the log header — a 1536×2048 camera
+       shot and an 800×720 drawn sheet are different beasts, and the
+       size is the first thing that explains a slow or blind read. */
+    return new Promise(function (resolve) {
+      try {
+        var img = new Image();
+        var url = URL.createObjectURL(blob);
+        img.onload = function () {
+          try { URL.revokeObjectURL(url); } catch (e) {}
+          resolve({ w: img.naturalWidth || 0, h: img.naturalHeight || 0 });
+        };
+        img.onerror = function () { try { URL.revokeObjectURL(url); } catch (e) {} resolve(null); };
+        img.src = url;
+      } catch (e) { resolve(null); }
+    });
+  }
   function benchRunBackend(backend, blob) {
     var label = backend === 'webgpu' ? 'WebGPU' : 'WebAssembly';
     benchState = { phase: 'loading', backend: label, run: 0, total: BENCH_RUNS };
@@ -4377,12 +4540,27 @@
     }).then(function (ocr) {
       var loadMs = benchNow() - t0;
       var lines = ['Engine: ' + label + ' — loaded in ' + benchSecs(loadMs)];
-      var times = [], i = 0;
+      var times = [], codes = [], good = 0, firstItems = null, firstFailed = false, i = 0;
       function one() {
         if (i >= BENCH_RUNS) {
-          var st = benchStats(times);
-          lines.push('  Average: ' + benchSecs(st.avg) +
-            ' (fastest ' + benchSecs(st.min) + ', slowest ' + benchSecs(st.max) + ')');
+          if (times.length) {
+            var st = benchStats(times);
+            lines.push('  Average: ' + benchSecs(st.avg) +
+              ' (fastest ' + benchSecs(st.min) + ', slowest ' + benchSecs(st.max) + ')');
+          } else {
+            lines.push('  Average: no runs finished — every read failed (E-READ).');
+          }
+          var noText = codes.filter(function (c) { return c === 'E-NO-TEXT'; }).length;
+          var noMatch = codes.filter(function (c) { return c === 'E-NO-MATCH'; }).length;
+          var readErr = codes.filter(function (c) { return c === 'E-READ'; }).length;
+          if (noText === BENCH_RUNS) lines.push('  Verdict: ' + label + ' saw no text at all in ' + BENCH_RUNS + '/' + BENCH_RUNS + ' runs (E-NO-TEXT) — the reader is blind on this photo with this processor. Try the other processor.');
+          else if (noMatch === BENCH_RUNS) lines.push('  Verdict: ' + label + ' saw text in every run but matched no sizes (E-NO-MATCH) — the sheet may be laid out differently than the one it expects.');
+          else if (readErr === BENCH_RUNS) lines.push('  Verdict: ' + label + ' failed to read in every run (E-READ) — the reader itself is erroring, not the photo.');
+          else if (good === BENCH_RUNS) lines.push('  Verdict: ' + label + ' read the sheet cleanly in ' + BENCH_RUNS + '/' + BENCH_RUNS + ' runs.');
+          else lines.push('  Verdict: ' + label + ' read sizes in ' + good + '/' + BENCH_RUNS + ' runs and found nothing in the rest — the read is flaky on this photo with this processor.');
+          lines.push('  Details (run 1):');
+          if (firstFailed) lines.push('    (the read failed — nothing to show)');
+          else lines = lines.concat(benchDetailLines(firstItems || []));
           return lines;
         }
         i++;
@@ -4393,16 +4571,31 @@
           var ms = benchNow() - r0;
           times.push(ms);
           var items = (res && res[0] && res[0].items) || [];
+          if (i === 1) firstItems = items;
           var s = ScanParse.summarizePage(items, { tilt: tiltCorrectionOn() });
+          var code = '';
+          if (!items.length) code = 'E-NO-TEXT';
+          else if (s.found === 0) code = 'E-NO-MATCH';
+          else good++;
+          codes.push(code);
           lines.push('  Run ' + i + ': ' + benchSecs(ms) + ' — ' +
-            s.found + ' sizes, ' + s.total + ' pairs, ' + items.length + ' text bits');
+            s.found + ' sizes, ' + s.total + ' pairs, ' + items.length + ' text bits' +
+            (code ? ' (' + code + ')' : ''));
+          return one();
+        }).catch(function (e) {
+          /* One failed read doesn't kill the other runs — log it and
+             keep going, so the log shows the flakiness instead of
+             hiding it behind a single error. */
+          if (i === 1) firstFailed = true;
+          codes.push('E-READ');
+          lines.push('  Run ' + i + ': failed (E-READ' + (e && e.message ? ': ' + e.message : '') + ')');
           return one();
         });
       }
       return one();
     }).catch(function (e) {
-      return ['Engine: ' + label + ' — couldn’t start' +
-        (e && e.message ? ' (' + e.message + ')' : '') + '.'];
+      return ['Engine: ' + label + ' — couldn’t start (E-LOAD' +
+        (e && e.message ? ': ' + e.message + ')' : ')') + '.'];
     });
   }
   /** The whole benchmark: the chosen processor(s), five reads each,
@@ -4419,10 +4612,13 @@
       : 'Default test sheet (' + BENCH_SHEET.length + ' sizes, ' + benchSheetTotal() + ' pairs)';
     var blobP = benchFile ? Promise.resolve(benchFile) : makeBenchmarkSheetBlob();
     return blobP.then(function (blob) {
+      return benchPhotoSize(blob).then(function (size) {
       var lines = [];
       lines.push('JeansMixing benchmark — ' + new Date().toLocaleString());
       lines.push('App v' + APP_VERSION);
-      lines.push('File: ' + fileLabel);
+      lines.push('File: ' + fileLabel + (size && size.w ? ' — ' + size.w + '×' + size.h + ' px' : ''));
+      lines.push('Chosen processor: ' + (settings.scanEngine === 'wasm' ? 'WebAssembly' : 'WebGPU'));
+      lines.push('Tilt correction: ' + (tiltCorrectionOn() ? 'On' : 'Off'));
       var chain = Promise.resolve();
       backends.forEach(function (b) {
         chain = chain.then(function () {
@@ -4437,6 +4633,7 @@
         renderBenchmark();
         toast('Benchmark done — log saved, tap Copy log to share it');
         return true;
+      });
       });
     }).catch(function (e) {
       benchRunning = false;
@@ -4508,11 +4705,17 @@
       try { benchLogText = localStorage.getItem(BENCH_LOG_KEY) || ''; } catch (e) { benchLogText = ''; }
     }
     // The results block mirrors the log's per-engine lines, minus the
-    // three-line header (title, app version, file).
+    // header (title, app version, file, chosen processor, tilt) — the
+    // header lines are skipped by name, so an older saved log with a
+    // shorter header still shows its engine lines.
     var resEl = el('benchResults');
     resEl.innerHTML = '';
     if (benchLogText) {
-      benchLogText.split('\n').slice(3).forEach(function (line) {
+      var logLines = benchLogText.split('\n');
+      var headerRe = /^(JeansMixing benchmark|App v|File:|Chosen processor:|Tilt correction:)/;
+      var start = 0;
+      while (start < logLines.length && headerRe.test(logLines[start])) start++;
+      logLines.slice(start).forEach(function (line) {
         if (!line) return;
         var d = document.createElement('div');
         d.className = line.indexOf('Engine:') === 0 ? 'set-label' : 'sub';
@@ -5478,9 +5681,14 @@
     el('textCameraInput').addEventListener('change', onTextPhotoChange);
     el('textCameraInput').addEventListener('cancel', function () {
       /* Backed out of the camera app without a photo: stay on the
-         overlay with the buttons live so he can try again. (Not every
-         browser fires this — Cancel is always there as the fallback.) */
-      if (textOverlayOpen() && !textReading) {
+         overlay with the buttons live so he can try again — or, when
+         the page-2 wait popup is the live surface, keep it up with a
+         Take photo button. (Not every browser fires this — Cancel is
+         always there as the fallback.) */
+      if (textWaitOpen) {
+        showTextWait(2, 'No photo taken yet — tap Take photo to try again.',
+          [textWaitTakePhotoBtn(), textWaitCancelBtn()]);
+      } else if (textOverlayOpen() && !textReading) {
         textStatus('No photo taken — tap Take photo to try again.');
         setTextButtonsDisabled(false);
       }
