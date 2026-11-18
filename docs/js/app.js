@@ -15,7 +15,7 @@
   var M = window.JM;
   // Single source of truth for the displayed version (Projects title).
   // Bump this with every release, alongside the ?v= cache-busters.
-  var APP_VERSION = '2.10.0';
+  var APP_VERSION = '2.10.1';
 
   function el(id) { return document.getElementById(id); }
 
@@ -1949,6 +1949,17 @@
   function blurHint() {
     return ' This looks blurry — tap Retry for a clearer shot, holding steady and tapping the sheet to focus.';
   }
+  /** Sizes seen but quantities missing means the rows are sloped, not
+      blurry: the reader still finds the size text on a tilted photo,
+      it just can't pair the numbers. Ten or more such rows separates
+      a tilted page (dozens of sizes seen, none read) from a blurry
+      one (the reader barely sees any size text at all). */
+  function looksTilted(found, sizesSeen) {
+    return (sizesSeen - found) >= 10;
+  }
+  function tiltHint() {
+    return ' The rows look tilted — hold the phone straight above the sheet and tap Retry for a clearer shot.';
+  }
 
   /** One page came back from the engine: keep its items, then show what
       was read and offer the next step. Page 1 offers Retry / Scan next
@@ -1965,7 +1976,7 @@
       var summary = 'Page 1 read: ' + s.found + ' sizes, ' + s.total + ' pairs' +
         (s.flagged ? ', ' + (s.flagged === 1 ? '1 row needs attention' : s.flagged + ' rows need attention') : '') +
         (shown.length ? ' — ' + shown.join(', ') + '.' : '.');
-      if (looksBlurry(s.found, s.flagged)) summary += blurHint();
+      if (looksBlurry(s.found, s.flagged)) summary += looksTilted(s.found, s.sizesSeen || 0) ? tiltHint() : blurHint();
       /* A second page picked with the first reads itself when page 1
          looks good — no extra tap. A blurry page 1 stops here instead,
          so he can Retry it; "Scan next page" then uses the queued
@@ -2014,7 +2025,7 @@
     var bothMsg = 'Both pages read: ' + ok + ' sizes, ' + total + ' pairs' +
       (bad ? ', ' + (bad === 1 ? '1 row needs attention' : bad + ' rows need attention') : '') +
       (shown2.length ? ' — ' + shown2.join(', ') + '.' : '.');
-    if (looksBlurry(ok, bad)) bothMsg += blurHint();
+    if (looksBlurry(ok, bad)) bothMsg += looksTilted(ok, merged.sizesSeen || 0) ? tiltHint() : blurHint();
     showModal({
       title: 'Both pages read',
       message: bothMsg,

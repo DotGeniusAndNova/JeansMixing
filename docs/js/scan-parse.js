@@ -179,6 +179,15 @@
    * size/qty pairs sit within ~2px, so the +-10px band keeps every true
    * pair and kills cross-row grabs. Never pool pages: the lookup runs
    * per page, and pages merge afterwards. */
+  /* A tilted photo slopes every row: the quantity sits a few pixels
+     above or below the size's centre, by (qty.x - size.x) * slope,
+     where slope is the size column's lean. The band is centred on
+     that sloped line instead of flat. Proven on alex's Reg 750 sheet:
+     the flat band reads 16/28 at 3 degrees of tilt and 0/28 at 5
+     degrees (every size found, no quantity beside it — the exact
+     "it kept saying blurry" symptom); the sloped band reads 28/28
+     at both, with zero wrong numbers. The sign is settled by that
+     test: the other sign reads 0/28. */
   var LOOKUP_BAND = 10; // px, same-row band around the size token's centre
   var LOOKUP_REACH = 300; // px, how far right of the size token a qty may sit
   /* Qty-slot letters: a letter in the QUANTITY slot only is a misread
@@ -226,6 +235,28 @@
     };
   }
 
+  /** How much the size column leans on this page, as the expected
+      quantity offset per pixel of horizontal distance (dy per dx).
+      The sizes share one left-aligned column, so their left edge (x0)
+      is stable across sizes of different widths — a least-squares fit
+      of x0 against cy over the detected size tokens. Fewer than two
+      sizes on the page -> 0, the flat band. */
+  function pageSlopeK(items) {
+    var boxes = (items || []).map(itemBox).filter(function (b) { return !!b; });
+    var grid = {};
+    gridSizes().forEach(function (g) { grid[normalizeSizeToken(displaySize(g.waist, g.length))] = true; });
+    var pts = boxes.filter(function (b) { return grid[normalizeSizeToken(b.text)]; });
+    var n = pts.length;
+    if (n < 2) return 0;
+    var mx = 0, my = 0, i;
+    for (i = 0; i < n; i++) { mx += pts[i].cy; my += pts[i].x0; }
+    mx /= n; my /= n;
+    var sxx = 0, sxy = 0;
+    for (i = 0; i < n; i++) { sxx += (pts[i].cy - mx) * (pts[i].cy - mx); sxy += (pts[i].cy - mx) * (pts[i].x0 - my); }
+    if (!sxx) return 0;
+    return -(sxy / sxx);
+  }
+
   /* Look one size up on one page of OCR items. Returns:
        {found:false} — the size token isn't on this page;
        {found:true, qty:null, sizeText, box} — size found, no number
@@ -240,7 +271,11 @@
      review can crop the row straight out of the photo. The engine
      returns polygons in full-resolution image space (verified on
      alex's sheets: y up to 1888 on a 2048-tall photo), so the box
-     maps 1:1 onto the photo as the browser shows it. */
+     maps 1:1 onto the photo as the browser shows it.
+     slopeK (optional) is the page's row slope from pageSlopeK: the
+     quantity is expected at dy = slopeK * (qty.cx - size.cx), so a
+     tilted photo still pairs each size with its own quantity. Omit
+     it and the band stays flat, as before. */
   function unionBox(a, b) {
     if (!a) return b || null;
     if (!b) return a;
@@ -249,7 +284,7 @@
       x1: Math.max(a.x1, b.x1), y1: Math.max(a.y1, b.y1)
     };
   }
-  function lookupSize(items, sizeText) {
+  function lookupSize(items, sizeText, slopeK) {
     var boxes = (items || []).map(itemBox).filter(function (b) { return !!b; });
     var want = normalizeSizeToken(sizeText);
     var s = null;
@@ -257,10 +292,12 @@
       if (normalizeSizeToken(boxes[i].text) === want) { s = boxes[i]; break; }
     }
     if (!s) return { found: false };
+    var k = slopeK || 0;
     var cands = boxes.filter(function (it) {
       var n = /^\d+$/.test(it.text) ? it.text : normalizeQtyToken(it.text);
       if (n === null) return false;
-      return it.cx > s.x1 && Math.abs(it.cy - s.cy) < LOOKUP_BAND && (it.x0 - s.x1) < LOOKUP_REACH;
+      var expDy = k * (it.cx - s.cx);
+      return it.cx > s.x1 && Math.abs((it.cy - s.cy) - expDy) < LOOKUP_BAND && (it.x0 - s.x1) < LOOKUP_REACH;
     }).sort(function (a, b) { return a.x0 - b.x0; });
     if (!cands.length) return { found: true, qty: null, sizeText: s.text, box: { x0: s.x0, y0: s.y0, x1: s.x1, y1: s.y1 } };
     var first = cands[0];
@@ -294,19 +331,28 @@
     /* Pass 1: find every size (as before) and, per page, the quantity
        column — the median right edge of the quantities that WERE read.
        The quantities are right-aligned on the sheet, so that edge is
-       stable across digit counts (on alex's Jeds page 2: 625–641). */
+       stable across digit counts (on alex's Jeds page 2: 625–641).
+       Each page's row slope is fitted once here and handed to every
+       lookup on that page, so a tilted photo still pairs sizes with
+       their own quantities. sizesSeen counts grid sizes whose token
+       was detected on any page, quantities or not — the app uses it
+       to tell a tilted photo (sizes seen, quantities missing) from a
+       blurry one (nothing seen at all). */
     var found = [];
     var qtyRight = {}; // page index -> [qtyBox.x1, ...]
+    var pageSlopes = (pages || []).map(pageSlopeK);
+    var sizesSeen = 0;
     gridSizes().forEach(function (g) {
       var sizeText = displaySize(g.waist, g.length);
       var r = null, rPage = -1;
       for (var p = 0; p < (pages || []).length; p++) {
-        var rr = lookupSize(pages[p], sizeText);
+        var rr = lookupSize(pages[p], sizeText, pageSlopes[p]);
         if (rr.found) {
           r = rr; rPage = p;
           if (rr.qty !== null) break;
         }
       }
+      if (r) sizesSeen++;
       found.push({ g: g, sizeText: sizeText, r: r, rPage: rPage });
       if (r && r.qtyBox) {
         (qtyRight[rPage] = qtyRight[rPage] || []).push(r.qtyBox.x1);
@@ -353,19 +399,23 @@
         rows.push({ flag: 'guessed', raw: r.raw, waist: g.waist, length: g.length, qty: r.qty, box: r.box, page: rPage });
       }
     });
-    return { rows: rows };
+    return { rows: rows, sizesSeen: sizesSeen };
   }
 
   /* One page, summarized for the after-scan modal: how many sizes were
      found on THIS page, their total, and how many rows need attention.
      Sizes not on this page at all are ignored here — they may be on the
      next page; only the merged lookup (lookupPages over all pages) can
-     call a size missing. */
+     call a size missing. sizesSeen counts every size token detected on
+     the page, quantities or not, so the app can tell a tilted photo
+     (sizes seen, quantities missing) from a blurry one (nothing seen). */
   function summarizePage(items) {
-    var found = 0, total = 0, flagged = 0, sizes = [];
+    var k = pageSlopeK(items);
+    var found = 0, total = 0, flagged = 0, sizes = [], sizesSeen = 0;
     gridSizes().forEach(function (g) {
-      var r = lookupSize(items, displaySize(g.waist, g.length));
+      var r = lookupSize(items, displaySize(g.waist, g.length), k);
       if (!r.found) return;
+      sizesSeen++;
       if (r.qty === null) { flagged++; return; }
       if (r.qty > 0) {
         found++; total += r.qty;
@@ -375,7 +425,7 @@
         flagged++;
       }
     });
-    return { found: found, total: total, flagged: flagged, sizes: sizes };
+    return { found: found, total: total, flagged: flagged, sizes: sizes, sizesSeen: sizesSeen };
   }
 
   var api = {
