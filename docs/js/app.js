@@ -15,7 +15,7 @@
   var M = window.JM;
   // Single source of truth for the displayed version (Projects title).
   // Bump this with every release, alongside the ?v= cache-busters.
-  var APP_VERSION = '2.13.0';
+  var APP_VERSION = '2.13.1';
 
   function el(id) { return document.getElementById(id); }
 
@@ -1888,17 +1888,75 @@
     readTextPhoto(picked[0]);
   }
 
-  /** A photo from the camera app or the gallery goes straight to the
-      reader — no canvas round-trip, so the reader sees the photo's
-      original bytes (re-encoding to JPEG first can blur the small
-      digits). */
+  /** A photo from the camera app or the gallery goes to the reader —
+      shrunk first when it's big. A 3000x4000 phone photo breaks the
+      reader two ways: the engine sometimes can't even decode it on
+      the phone (E-READ in the benchmark log), and the lookup's pixel
+      constants (band +/-10px, reach 300px) are tuned for ~1500px-wide
+      photos, so at double size the rows fall outside them (Black 525
+      at 3000x4000: 13/17 sizes; the same items with coords halved:
+      17/17). At 2048 on the long side it reads cleanly, and reads
+      run ~2x faster too. The shrunk photo is also what gets kept
+      for the crop previews, so the crop boxes (drawn in the
+      reader's coordinate space) still line up. Small photos pass
+      through untouched, and any failure here hands back the
+      original so a scan never dies on the shrink step. */
   function readTextPhoto(file) {
     if (!file) return;
-    /* Keep the photo for the crop previews: textPages.length is the
-       0-based index of the page being read (a Retry pops textPages
-       first, so it overwrites the same slot). */
-    textPagePhotos[textPages.length] = file;
-    runTextReadBlob(file);
+    downscalePhotoBlob(file).then(function (d) {
+      /* Keep the photo for the crop previews: textPages.length is the
+         0-based index of the page being read (a Retry pops textPages
+         first, so it overwrites the same slot). */
+      textPagePhotos[textPages.length] = d.blob;
+      runTextReadBlob(d.blob);
+    });
+  }
+  var PHOTO_MAX_SIDE = 2048;
+  function downscalePhotoBlob(blob) {
+    /* Resolves { blob, downscaled, fromW, fromH, toW, toH } — blob is
+       the photo at most PHOTO_MAX_SIDE on its long side, or the
+       original when it's already small enough or the shrink fails. */
+    return new Promise(function (resolve) {
+      var orig = { blob: blob, downscaled: false, fromW: 0, fromH: 0, toW: 0, toH: 0 };
+      var url;
+      try { url = URL.createObjectURL(blob); } catch (e) { resolve(orig); return; }
+      var img = new Image();
+      var settled = false;
+      var timer = setTimeout(function () {
+        if (settled) return; settled = true;
+        try { URL.revokeObjectURL(url); } catch (e) {}
+        resolve(orig);
+      }, 5000);
+      img.onload = function () {
+        if (settled) return; settled = true; clearTimeout(timer);
+        try { URL.revokeObjectURL(url); } catch (e) {}
+        var w = img.naturalWidth || img.width || 0, h = img.naturalHeight || img.height || 0;
+        if (!w || !h || Math.max(w, h) <= PHOTO_MAX_SIDE) { resolve(orig); return; }
+        var scale = PHOTO_MAX_SIDE / Math.max(w, h);
+        var cw = Math.max(1, Math.round(w * scale)), ch = Math.max(1, Math.round(h * scale));
+        try {
+          var c = document.createElement('canvas');
+          c.width = cw; c.height = ch;
+          var ctx = c.getContext('2d');
+          if (!ctx || !c.toBlob) { resolve(orig); return; }
+          ctx.drawImage(img, 0, 0, cw, ch);
+          c.toBlob(function (b) {
+            if (b) resolve({ blob: b, downscaled: true, fromW: w, fromH: h, toW: cw, toH: ch });
+            else resolve(orig);
+          }, 'image/jpeg', 0.92);
+        } catch (e) { resolve(orig); }
+      };
+      img.onerror = function () {
+        if (settled) return; settled = true; clearTimeout(timer);
+        try { URL.revokeObjectURL(url); } catch (e) {}
+        resolve(orig);
+      };
+      try { img.src = url; } catch (e) {
+        if (settled) return; settled = true; clearTimeout(timer);
+        try { URL.revokeObjectURL(url); } catch (e2) {}
+        resolve(orig);
+      }
+    });
   }
   /** Drop the kept photos (and their object URLs) — a new scan, a
       cancelled scan, or the end of the review. */
@@ -4540,7 +4598,7 @@
     }).then(function (ocr) {
       var loadMs = benchNow() - t0;
       var lines = ['Engine: ' + label + ' — loaded in ' + benchSecs(loadMs)];
-      var times = [], codes = [], good = 0, firstItems = null, firstFailed = false, i = 0;
+      var times = [], codes = [], good = 0, detailItems = null, detailRun = 0, completedItems = null, completedRun = 0, i = 0;
       function one() {
         if (i >= BENCH_RUNS) {
           if (times.length) {
@@ -4557,10 +4615,26 @@
           else if (noMatch === BENCH_RUNS) lines.push('  Verdict: ' + label + ' saw text in every run but matched no sizes (E-NO-MATCH) — the sheet may be laid out differently than the one it expects.');
           else if (readErr === BENCH_RUNS) lines.push('  Verdict: ' + label + ' failed to read in every run (E-READ) — the reader itself is erroring, not the photo.');
           else if (good === BENCH_RUNS) lines.push('  Verdict: ' + label + ' read the sheet cleanly in ' + BENCH_RUNS + '/' + BENCH_RUNS + ' runs.');
-          else lines.push('  Verdict: ' + label + ' read sizes in ' + good + '/' + BENCH_RUNS + ' runs and found nothing in the rest — the read is flaky on this photo with this processor.');
-          lines.push('  Details (run 1):');
-          if (firstFailed) lines.push('    (the read failed — nothing to show)');
-          else lines = lines.concat(benchDetailLines(firstItems || []));
+          else {
+            /* Mixed: say 0-bit and decode-fail separately instead of
+               lumping them into 'found nothing in the rest'. */
+            var parts = [];
+            if (good) parts.push('read sizes in ' + good + '/' + BENCH_RUNS + ' runs');
+            if (noText) parts.push('saw no text in ' + noText + '/' + BENCH_RUNS + ' runs (E-NO-TEXT)');
+            if (noMatch) parts.push('matched no sizes in ' + noMatch + '/' + BENCH_RUNS + ' runs (E-NO-MATCH)');
+            if (readErr) parts.push('failed to read in ' + readErr + '/' + BENCH_RUNS + ' runs (E-READ)');
+            lines.push('  Verdict: ' + label + ' ' + parts.join(' and ') + ' — the read is flaky on this photo with this processor.');
+          }
+          if (detailItems !== null) {
+            lines.push('  Details (run ' + detailRun + '):');
+            lines = lines.concat(benchDetailLines(detailItems));
+          } else if (completedItems !== null) {
+            lines.push('  Details (run ' + completedRun + '):');
+            lines = lines.concat(benchDetailLines(completedItems));
+          } else {
+            lines.push('  Details:');
+            lines.push('    (every read failed — nothing to show)');
+          }
           return lines;
         }
         i++;
@@ -4571,7 +4645,13 @@
           var ms = benchNow() - r0;
           times.push(ms);
           var items = (res && res[0] && res[0].items) || [];
-          if (i === 1) firstItems = items;
+          /* Details show the first run that actually returned text —
+             not just run 1, which may have failed while a later run
+             read fine. completedItems is the first run that returned
+             at all (even empty), so a 0-text read still shows its
+             (empty) details instead of 'nothing to show'. */
+          if (completedItems === null) { completedItems = items; completedRun = i; }
+          if (detailItems === null && items.length > 0) { detailItems = items; detailRun = i; }
           var s = ScanParse.summarizePage(items, { tilt: tiltCorrectionOn() });
           var code = '';
           if (!items.length) code = 'E-NO-TEXT';
@@ -4586,17 +4666,39 @@
           /* One failed read doesn't kill the other runs — log it and
              keep going, so the log shows the flakiness instead of
              hiding it behind a single error. */
-          if (i === 1) firstFailed = true;
           codes.push('E-READ');
           lines.push('  Run ' + i + ': failed (E-READ' + (e && e.message ? ': ' + e.message : '') + ')');
           return one();
         });
       }
-      return one();
+      return one().then(function (bl) {
+        /* Put the engine away: on a Both run the first engine would
+           otherwise stay alive (models + worker) while the second
+           loads and runs — the pile-up that can starve a phone. The
+           wrapper exposes dispose() (verified in the vendored
+           bundle: it drops the detection + recognition models); a
+           dispose that throws or hangs never breaks the log. */
+        try {
+          if (ocr && typeof ocr.dispose === 'function') {
+            var d = ocr.dispose();
+            if (d && typeof d.catch === 'function') d.catch(function () {});
+          }
+        } catch (e) {}
+        return bl;
+      });
     }).catch(function (e) {
       return ['Engine: ' + label + ' — couldn’t start (E-LOAD' +
         (e && e.message ? ': ' + e.message + ')' : ')') + '.'];
     });
+  }
+  function benchFileSizeText(blob) {
+    /* '1.3 MB' / '358 KB' / '12 KB' for the log header; '' when the
+       size isn't known (a fake blob in tests has none). */
+    var n = blob && blob.size;
+    if (typeof n !== 'number' || !(n >= 0)) return '';
+    if (n >= 1048576) return ', ' + (Math.round(n / 104857.6) / 10) + ' MB';
+    if (n >= 1024) return ', ' + Math.round(n / 1024) + ' KB';
+    return ', ' + n + ' B';
   }
   /** The whole benchmark: the chosen processor(s), five reads each,
       then the log — saved, shown, and copyable. */
@@ -4612,17 +4714,22 @@
       : 'Default test sheet (' + BENCH_SHEET.length + ' sizes, ' + benchSheetTotal() + ' pairs)';
     var blobP = benchFile ? Promise.resolve(benchFile) : makeBenchmarkSheetBlob();
     return blobP.then(function (blob) {
-      return benchPhotoSize(blob).then(function (size) {
+      /* Same shrink as the scanner: a big photo can fail to decode
+         and reads worse at full size, so the runs read the shrunk
+         copy and the log says so. */
+      return downscalePhotoBlob(blob).then(function (d) {
+      return benchPhotoSize(d.blob).then(function (size) {
       var lines = [];
       lines.push('JeansMixing benchmark — ' + new Date().toLocaleString());
       lines.push('App v' + APP_VERSION);
-      lines.push('File: ' + fileLabel + (size && size.w ? ' — ' + size.w + '×' + size.h + ' px' : ''));
-      lines.push('Chosen processor: ' + (settings.scanEngine === 'wasm' ? 'WebAssembly' : 'WebGPU'));
+      lines.push('File: ' + fileLabel + (size && size.w ? ' — ' + size.w + '×' + size.h + ' px' : '') + benchFileSizeText(blob));
+      if (d.downscaled) lines.push('Photo downscaled to ' + d.toW + '×' + d.toH + ' px before reading (original ' + d.fromW + '×' + d.fromH + ' px) — big photos can fail to decode and read worse at full size.');
+      lines.push('Chosen processor: ' + (benchBackendChoice() === 'both' ? 'Both (WebGPU + WebAssembly)' : benchBackendChoice() === 'wasm' ? 'WebAssembly' : 'WebGPU'));
       lines.push('Tilt correction: ' + (tiltCorrectionOn() ? 'On' : 'Off'));
       var chain = Promise.resolve();
       backends.forEach(function (b) {
         chain = chain.then(function () {
-          return benchRunBackend(b, blob).then(function (bl) { lines = lines.concat(bl); });
+          return benchRunBackend(b, d.blob).then(function (bl) { lines = lines.concat(bl); });
         });
       });
       return chain.then(function () {
@@ -4633,6 +4740,7 @@
         renderBenchmark();
         toast('Benchmark done — log saved, tap Copy log to share it');
         return true;
+      });
       });
       });
     }).catch(function (e) {
@@ -4712,7 +4820,7 @@
     resEl.innerHTML = '';
     if (benchLogText) {
       var logLines = benchLogText.split('\n');
-      var headerRe = /^(JeansMixing benchmark|App v|File:|Chosen processor:|Tilt correction:)/;
+      var headerRe = /^(JeansMixing benchmark|App v|File:|Photo downscaled|Chosen processor:|Tilt correction:)/;
       var start = 0;
       while (start < logLines.length && headerRe.test(logLines[start])) start++;
       logLines.slice(start).forEach(function (line) {
